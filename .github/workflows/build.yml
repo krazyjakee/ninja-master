@@ -1,0 +1,45 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install SDL2
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev pkg-config
+      - name: Install Rust
+        run: rustup update stable && rustup default stable && rustup component add rustfmt clippy
+      - name: Fetch dependencies
+        run: cargo fetch --locked --manifest-path native/Cargo.toml
+      - name: Check formatting
+        run: cargo fmt --manifest-path native/Cargo.toml --check
+      - name: Test
+        run: cargo test --locked --manifest-path native/Cargo.toml
+      - name: Clippy
+        run: cargo clippy --locked --manifest-path native/Cargo.toml --all-targets
+      - name: Test packaging
+        run: python3 -m unittest discover -s tools -p test_package.py
+      - name: Build
+        run: cargo build --locked --release --manifest-path native/Cargo.toml
+      - name: Run without a cartridge
+        run: native/target/release/ninja-master-native --demo --headless --frames 120
+      - name: Package
+        run: tools/package.sh linux native/target/release/ninja-master-native
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ninja-master-linux
+          path: |
+            obj/dist/*.tar.gz
+            obj/dist/*.sha256
+          if-no-files-found: error

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+<title>Ninja Master</title>
+<circle cx="64" cy="64" r="62" fill="#1b2030"/>
+<circle cx="64" cy="64" r="54" fill="#bd3047"/>
+<polygon points="23,114 30,91 48,80 81,80 98,94 106,114" fill="#111624"/>
+<polygon points="89,51 119,35 110,62 95,69" fill="#ee5360"/>
+<polygon points="92,58 119,74 106,81 90,70" fill="#bd3047"/>
+<circle cx="64" cy="60" r="36" fill="#111624"/>
+<polygon points="31,48 95,48 98,58 30,58" fill="#ee5360"/>
+<polygon points="33,61 60,65 64,69 68,65 94,61 89,76 39,76" fill="#f5e4c9"/>
+<polygon points="41,65 57,68 54,71 43,70" fill="#111624"/>
+<polygon points="71,68 87,65 85,70 74,71" fill="#111624"/>
+<polygon points="38,78 90,78 79,93 49,93" fill="#242d42"/>
+</svg>

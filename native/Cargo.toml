@@ -1,0 +1,32 @@
+[package]
+name = "ninja-master-native"
+version = "0.1.1"
+edition = "2024"
+publish = false
+license = "MIT"
+readme = "../README.md"
+repository = "https://github.com/krazyjakee/ninja-master"
+description = "Native PC port of Shinobi III: Return of the Ninja Master; requires a user-supplied US ROM"
+keywords = ["game", "shinobi", "genesis", "native-port"]
+categories = ["games"]
+
+[features]
+default = ["desktop"]
+desktop = ["dep:sdl2", "dep:imgui", "dep:glow"]
+
+[dependencies]
+png = "=0.17.16"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.149"
+zip = { version = "=6.0.0", default-features = false, features = ["deflate-flate2"] }
+imgui = { version = "=0.12.0", optional = true }
+glow = { version = "=0.17.0", optional = true }
+sdl2 = { version = "=0.38.0", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Discover Homebrew's SDL2 library path for both launchers and direct Cargo builds.
+sdl2 = { version = "=0.38.0", optional = true, features = ["use-pkgconfig"] }
+
+# Keep debug builds responsive during gameplay.
+[profile.dev]
+opt-level = 1

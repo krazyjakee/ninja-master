@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">Ninja Master</title>
+  <desc id="desc">An original ninja emblem on a charcoal and crimson banner. Shinobi III on your desktop.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#111624"/><stop offset="1" stop-color="#252d42"/></linearGradient>
+    <linearGradient id="red"><stop stop-color="#bd3047"/><stop offset="1" stop-color="#ee5360"/></linearGradient>
+  </defs>
+  <rect width="1200" height="360" rx="24" fill="url(#bg)"/>
+  <path d="M830 0H1050L790 360H570Z" fill="#bd3047" opacity=".09"/>
+  <path d="M1080 0H1200V170L1060 360H830Z" fill="#bd3047" opacity=".13"/>
+  <path d="M0 330H1200" stroke="#ee5360" stroke-width="2" opacity=".35"/>
+  <g transform="translate(72 80) scale(1.55)">
+    <circle cx="64" cy="64" r="62" fill="#1b2030"/>
+    <circle cx="64" cy="64" r="54" fill="#bd3047"/>
+    <polygon points="23,114 30,91 48,80 81,80 98,94 106,114" fill="#111624"/>
+    <polygon points="89,51 119,35 110,62 95,69" fill="#ee5360"/>
+    <polygon points="92,58 119,74 106,81 90,70" fill="#bd3047"/>
+    <circle cx="64" cy="60" r="36" fill="#111624"/>
+    <polygon points="31,48 95,48 98,58 30,58" fill="#ee5360"/>
+    <polygon points="33,61 60,65 64,69 68,65 94,61 89,76 39,76" fill="#f5e4c9"/>
+    <polygon points="41,65 57,68 54,71 43,70" fill="#111624"/>
+    <polygon points="71,68 87,65 85,70 74,71" fill="#111624"/>
+    <polygon points="38,78 90,78 79,93 49,93" fill="#242d42"/>
+  </g>
+  <rect x="326" y="85" width="66" height="5" rx="2" fill="url(#red)"/>
+  <text x="322" y="167" fill="#f5e4c9" font-family="system-ui, Segoe UI, sans-serif" font-size="66" font-weight="800" letter-spacing="5">NINJA MASTER</text>
+  <text x="326" y="215" fill="#bac4d8" font-family="system-ui, Segoe UI, sans-serif" font-size="27">Shinobi III on your desktop.</text>
+  <text x="327" y="271" fill="#ee5360" font-family="system-ui, Segoe UI, sans-serif" font-size="17" font-weight="600" letter-spacing="3">YOUR CARTRIDGE. A NEW WAY TO PLAY.</text>
+</svg>

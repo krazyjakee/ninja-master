@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Ninja Master
+Comment=Native Shinobi III port (requires your own US ROM)
+Exec=ninja-master
+Icon=ninja-master
+Terminal=false
+Categories=Game;ActionGame;
+Keywords=Shinobi;Genesis;Mega Drive;Ninja;
+StartupNotify=true

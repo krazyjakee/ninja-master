@@ -1,0 +1,34 @@
+# User-supplied cartridges and archives
+rom/
+*.bin
+*.md
+!README.md
+*.gen
+*.smd
+*.rom
+*.zip
+*.7z
+*.tar.gz
+
+# Build output and local game data
+obj/
+out/
+target/
+native/target/
+art-packs/
+saves/
+*.nms
+*.wav
+*.ppm
+settings.ini
+rom-path.txt
+imgui.ini
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+
+# Local notes and editor settings
+docs/
+.vscode/
+.idea/
