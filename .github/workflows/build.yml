@@ -13,6 +13,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_TARGET_DIR: native/target
+  PYTHON: python
   SDL2_VERSION: 2.32.10
   SDL2_VC_SHA256: af347939395a58b365846aaea27391e69f9ec9d4dd650d6ac40802159b418a6e
 
@@ -77,6 +78,7 @@ jobs:
           "SDL2_ROOT=$($sdl.Replace('\', '/'))" >> $env:GITHUB_ENV
           "LIB=$sdl\lib\x64;$env:LIB" >> $env:GITHUB_ENV
           "RC=$(Get-Command rc.exe | Select-Object -ExpandProperty Source)" >> $env:GITHUB_ENV
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$(Get-Command link.exe | Select-Object -ExpandProperty Source)" >> $env:GITHUB_ENV
       - name: Install Rust
         run: rustup update stable && rustup default stable && rustup component add rustfmt clippy
       - uses: actions/cache@v4

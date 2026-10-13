@@ -12,6 +12,7 @@
 set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+python_cmd=${PYTHON:-python3}
 
 usage() {
     sed -n '4,7p' "$0" | sed 's/^# \{0,1\}//' >&2
@@ -67,7 +68,7 @@ fi
 
 name="ninja-master-$version-$platform-$arch"
 # These values form paths below out_dir. Reject traversal before removing staging.
-python3 - "$version" "$arch" <<'EOF'
+"$python_cmd" - "$version" "$arch" <<'EOF'
 import re, sys
 for value in sys.argv[1:]:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value):
@@ -85,7 +86,7 @@ cp -- "$project_root/README.md" "$stage/MANUAL.md"
 cp -- "$project_root/LICENSE" "$stage/LICENSE"
 mkdir -p -- "$stage/assets"
 cp -- "$project_root/assets/banner.svg" "$stage/assets/banner.svg"
-python3 "$project_root/tools/package_licenses.py" "$stage" "$project_root"
+"$python_cmd" "$project_root/tools/package_licenses.py" "$stage" "$project_root"
 
 if [ "$platform" = windows ]; then
     cp -- "$sdl_dll" "$stage/SDL2.dll"
@@ -214,11 +215,11 @@ Third-party components:
 - The application icon is original project artwork, not extracted ROM data.
 EOF
 
-python3 "$project_root/tools/package_metadata.py" "$stage" "$project_root" "$platform" "$version" "$arch"
+"$python_cmd" "$project_root/tools/package_metadata.py" "$stage" "$project_root" "$platform" "$version" "$arch"
 
 # Refuse to publish cartridge data: compare every staged file against the known
 # US/EU/JP SHA-1s and, when available, search for the repository ROM's header block.
-python3 - "$stage" "$project_root/rom/shinobi3_us.bin" <<'EOF'
+"$python_cmd" - "$stage" "$project_root/rom/shinobi3_us.bin" <<'EOF'
 import hashlib, os, re, sys
 
 stage, reference = sys.argv[1], sys.argv[2]
@@ -250,13 +251,13 @@ EOF
 if [ "$platform" = windows ]; then
     archive="$out_dir/$name.zip"
     rm -f -- "$archive"
-    (cd "$out_dir" && python3 -m zipfile -c "$archive" "$name")
+    (cd "$out_dir" && "$python_cmd" -m zipfile -c "$archive" "$name")
 else
     archive="$out_dir/$name.tar.gz"
     rm -f -- "$archive"
     tar -C "$out_dir" -czf "$archive" "$name"
 fi
-python3 - "$archive" <<'EOF'
+"$python_cmd" - "$archive" <<'EOF'
 import hashlib, pathlib, sys
 archive = pathlib.Path(sys.argv[1])
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
