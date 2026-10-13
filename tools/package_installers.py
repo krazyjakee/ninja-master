@@ -185,7 +185,7 @@ def wix_source(stage, manifest, filename):
     add(product, "Package", InstallerVersion="500", Compressed="yes", InstallScope="perUser", Platform="x64")
     add(product, "MajorUpgrade", Schedule="afterInstallInitialize", AllowSameVersionUpgrades="yes", DowngradeErrorMessage="A newer Ninja Master version is already installed.")
     add(product, "MediaTemplate", EmbedCab="yes")
-    for name, value in (("ALLUSERS", "2"), ("MSIINSTALLPERUSER", "1"), ("ARPPRODUCTICON", "AppIcon"), ("ARPNOMODIFY", "1")):
+    for name, value in (("ALLUSERS", "2"), ("MSIINSTALLPERUSER", "1"), ("ARPPRODUCTICON", "AppIcon")):
         add(product, "Property", Id=name, Value=value)
     add(product, "Icon", Id="AppIcon", SourceFile=str((stage / "icons/ninja-master.ico").resolve()))
     target = add(product, "Directory", Id="TARGETDIR", Name="SourceDir")
