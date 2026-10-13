@@ -30,6 +30,10 @@ def prepare(stage, root, platform, version, arch):
         (contents / "Resources").mkdir()
         shutil.move(stage / executable, contents / "MacOS" / executable)
         shutil.copyfile(resources / "ninja-master.icns", contents / "Resources/ninja-master.icns")
+        for name in ("LICENSE", "LICENSE-NOTES.txt", "THIRD-PARTY-NOTICES.txt", "MANUAL.md", "README.txt"):
+            shutil.copyfile(stage / name, contents / "Resources" / name)
+        shutil.copytree(stage / "third-party-licenses", contents / "Resources/third-party-licenses")
+        shutil.copytree(stage / "assets", contents / "Resources/assets")
         info = {
             "CFBundleDevelopmentRegion": "en",
             "CFBundleDisplayName": "Ninja Master",
@@ -43,10 +47,16 @@ def prepare(stage, root, platform, version, arch):
             "CFBundleVersion": cargo['version'],
             "NSHighResolutionCapable": True,
             "LSApplicationCategoryType": "public.app-category.action-games",
-            "LSMinimumSystemVersion": "11.0" if arch in ("arm64", "aarch64") else "10.13",
+            "LSMinimumSystemVersion": "15.0",
             "NinjaMasterReleaseVersion": version,
         }
+        if sys.platform == "darwin":
+            from bundle_macos import bundle
+            info["LSMinimumSystemVersion"] = bundle(stage / "Ninja Master.app")
         (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+        if sys.platform == "darwin":
+            from bundle_macos import sign
+            sign(stage / "Ninja Master.app")
         executable = "Ninja Master.app/Contents/MacOS/" + executable
         launcher = stage / "play.sh"
         launcher.write_text(launcher.read_text().replace('$dir/ninja-master-native', '$dir/' + executable))
@@ -64,7 +74,7 @@ def prepare(stage, root, platform, version, arch):
         "executable": executable,
         "rom": {"included": False, "region": "US", "size": 1048576,
                 "crc32": "5381506f", "sha1": "1e07d7998e3048fcfba4238ae96496460e91b3a5"},
-        "files": {str(path.relative_to(stage)): hashlib.sha256(path.read_bytes()).hexdigest()
+        "files": {path.relative_to(stage).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                   for path in sorted(stage.rglob("*")) if path.is_file()},
     }
     (stage / "release.json").write_text(json.dumps(manifest, indent=2) + "\n")

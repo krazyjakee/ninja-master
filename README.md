@@ -21,9 +21,9 @@ playthrough is not guaranteed in this version.
 
 ## Getting started
 
-1. Download an archive for your platform from [Releases](https://github.com/krazyjakee/ninja-master/releases), when available, and extract it.
+1. Download a package for your platform from [Releases](https://github.com/krazyjakee/ninja-master/releases).
 2. Have your own [compatible US ROM](#compatible-rom) ready. No ROM or original game assets are included.
-3. Launch **play.bat** on Windows, **play.sh** on Linux, or **Ninja Master.app** on macOS.
+3. Install or extract it as described below, then launch **Ninja Master**.
 4. Choose your ROM in the startup file picker. The game remembers its location for next time.
 5. Press **Enter**, select **GAME**, and press **Enter** again.
 
@@ -37,10 +37,25 @@ You can also name your dump `shinobi3_us.bin` and put it beside the executable
 On Windows, use `ninja-master-native.exe --rom "C:\path\to\your\game.bin"`.
 The `NINJA_MASTER_ROM` environment variable can also point to your ROM.
 
-Linux packages need the SDL2 runtime library (for example, `libsdl2-2.0-0` on
-Debian/Ubuntu). Windows packages include `SDL2.dll`; keep it next to the executable.
-macOS packages currently need SDL2 installed separately (`brew install sdl2`)
-and are unsigned.
+| Platform | Download | Install and launch |
+| --- | --- | --- |
+| Windows 10/11, 64-bit | `.msi` installer | Open the MSI, then launch **Ninja Master** from the Start menu. Installs for your user account. |
+| Windows portable | `.zip` | Extract the folder and open **play.bat**. Keep `SDL2.dll` beside the executable. |
+| Debian / Ubuntu, 64-bit | `.deb` | Run `sudo apt install ./ninja-master-*-linux-x86_64.deb`, then launch **Ninja Master** from your app menu. |
+| Fedora / RPM Linux, 64-bit | `.rpm` | Run `sudo dnf install ./ninja-master-*-linux-x86_64.rpm`, then launch **Ninja Master** from your app menu. |
+| Linux portable | `.tar.gz` | Extract the folder and run **play.sh**. Install your distribution's SDL2 runtime first. |
+| macOS 15+, Intel | `macos-x86_64.dmg` | Open the DMG, drag **Ninja Master.app** into Applications, then open it. |
+| macOS 15+, Apple Silicon | `macos-arm64.dmg` | Open the DMG, drag **Ninja Master.app** into Applications, then open it. |
+
+Windows and macOS downloads bundle SDL2; they do not need a separate SDL2
+installation. DEB and RPM packages install their runtime dependencies through
+your package manager. Linux builds are tested on Ubuntu 24.04 and Fedora;
+older distributions may need newer system libraries.
+
+These preview installers are not publisher signed or notarized. If macOS
+blocks the first launch, use **System Settings → Privacy & Security → Open Anyway**.
+Uninstalling the Windows application preserves ROM files you add and your
+settings and saves. Each download has a `.sha256` file for verifying its checksum.
 
 ### Running from source
 

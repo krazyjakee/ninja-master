@@ -10,36 +10,150 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_TARGET_DIR: native/target
+  SDL2_VERSION: 2.32.10
+  SDL2_VC_SHA256: af347939395a58b365846aaea27391e69f9ec9d4dd650d6ac40802159b418a6e
+
 jobs:
-  linux:
-    runs-on: ubuntu-latest
+  build:
+    name: ${{ matrix.platform }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            rustflags: ''
+          - os: windows-2025
+            platform: windows
+            arch: x86_64
+            target: x86_64-pc-windows-msvc
+            rustflags: '-C target-feature=+crt-static'
+          - os: macos-15-intel
+            platform: macos
+            arch: x86_64
+            target: x86_64-apple-darwin
+            rustflags: ''
+          - os: macos-15
+            platform: macos
+            arch: arm64
+            target: aarch64-apple-darwin
+            rustflags: ''
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+      MACOSX_DEPLOYMENT_TARGET: '15.0'
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v6
-      - name: Install SDL2
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev pkg-config
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Install Linux tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev pkg-config dpkg-dev rpm desktop-file-utils
+      - name: Install macOS tools
+        if: runner.os == 'macOS'
+        run: brew install sdl2 pkg-config
+      - name: Install Windows SDL2
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'SDL2.zip'
+          $destination = Join-Path $env:RUNNER_TEMP 'SDL2'
+          Invoke-WebRequest "https://github.com/libsdl-org/SDL/releases/download/release-$env:SDL2_VERSION/SDL2-devel-$env:SDL2_VERSION-VC.zip" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLower() -ne $env:SDL2_VC_SHA256) { throw 'SDL2 checksum mismatch' }
+          Expand-Archive $archive $destination
+          $sdl = Join-Path $destination "SDL2-$env:SDL2_VERSION"
+          "SDL2_ROOT=$($sdl.Replace('\', '/'))" >> $env:GITHUB_ENV
+          "LIB=$sdl\lib\x64;$env:LIB" >> $env:GITHUB_ENV
+          "RC=$(Get-Command rc.exe | Select-Object -ExpandProperty Source)" >> $env:GITHUB_ENV
       - name: Install Rust
         run: rustup update stable && rustup default stable && rustup component add rustfmt clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: native-${{ matrix.target }}-${{ hashFiles('native/Cargo.lock') }}-${{ matrix.rustflags }}
       - name: Fetch dependencies
         run: cargo fetch --locked --manifest-path native/Cargo.toml
       - name: Check formatting
+        if: runner.os == 'Linux'
         run: cargo fmt --manifest-path native/Cargo.toml --check
       - name: Test
+        if: runner.os == 'Linux'
         run: cargo test --locked --manifest-path native/Cargo.toml
       - name: Clippy
+        if: runner.os == 'Linux'
         run: cargo clippy --locked --manifest-path native/Cargo.toml --all-targets
       - name: Test packaging
-        run: python3 -m unittest discover -s tools -p test_package.py
+        if: runner.os == 'Linux'
+        run: python -m unittest discover -s tools -p 'test_package*.py'
       - name: Build
         run: cargo build --locked --release --manifest-path native/Cargo.toml
-      - name: Run without a cartridge
-        run: native/target/release/ninja-master-native --demo --headless --frames 120
-      - name: Package
-        run: tools/package.sh linux native/target/release/ninja-master-native
-      - name: Upload archive
+      - name: Package portable archive
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("native/Cargo.toml", "rb"))["package"]["version"])')
+          if [ '${{ matrix.platform }}' = windows ]; then
+            tools/package.sh windows native/target/release/ninja-master-native.exe --version "$version" --arch x86_64 --sdl-dll "$SDL2_ROOT/lib/x64/SDL2.dll" --sdl-license "$SDL2_ROOT/LICENSE.txt"
+          else
+            tools/package.sh '${{ matrix.platform }}' native/target/release/ninja-master-native --version "$version" --arch '${{ matrix.arch }}'
+          fi
+      - name: Package native installers
+        run: |
+          case '${{ matrix.platform }}' in
+            linux) python tools/package_installers.py obj/dist/*.tar.gz --formats deb,rpm ;;
+            windows) python tools/package_installers.py obj/dist/*.zip --formats msi ;;
+            macos) python tools/package_installers.py obj/dist/*.tar.gz --formats dmg ;;
+          esac
+      - name: Validate installed application
+        run: python tools/verify_installation.py obj/dist --platform '${{ matrix.platform }}' --arch '${{ matrix.arch }}'
+      - name: Validate RPM on Fedora
+        if: runner.os == 'Linux'
+        run: docker run --rm -v "$PWD/obj/dist:/packages:ro" fedora:latest bash -c 'dnf install -y /packages/*.rpm && ninja-master --demo --headless --frames 120'
+      - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: ninja-master-linux
+          name: ninja-master-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             obj/dist/*.tar.gz
+            obj/dist/*.zip
+            obj/dist/*.deb
+            obj/dist/*.rpm
+            obj/dist/*.msi
+            obj/dist/*.dmg
             obj/dist/*.sha256
           if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
+          Native desktop preview for Windows x86_64, Linux x86_64, macOS Intel and macOS Apple Silicon. Windows includes an MSI installer and portable ZIP; Linux includes DEB, RPM and a portable archive; macOS includes a DMG and portable app archive for each architecture. SDL2 is bundled on Windows and macOS. Mac packages require macOS 15 or later. Preview installers are not notarized or publisher signed.
+
+          Supply your own original Shinobi III USA ROM: 1,048,576 bytes, CRC32 5381506f. Original game data is decoded from the cartridge at runtime; no ROM or extracted game assets are included. Gameplay remains a work in progress. See the README for controls and installation instructions.
+          EOF
+          gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Ninja Master ${GITHUB_REF_NAME#v} preview" --prerelease --notes-file "$RUNNER_TEMP/release-notes.txt"

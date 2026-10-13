@@ -128,8 +128,8 @@ fi
 if [ "$platform" = windows ]; then
     sdl_note='SDL2.dll (SDL 2, zlib license, see LICENSE-SDL2.txt) must stay next to the .exe.'
 elif [ "$platform" = macos ]; then
-    sdl_note='The executable links SDL2 dynamically; install it first (for example
-"brew install sdl2"). macOS builds are made locally, not by CI.'
+    sdl_note='The application bundles SDL2. No Homebrew installation is needed.
+Choose the Intel (x86_64) or Apple Silicon (arm64) download for your Mac.'
 else
     sdl_note='The executable links the system SDL2 library; install it first
 (Debian/Ubuntu: "sudo apt install libsdl2-2.0-0", Fedora: "sudo dnf install SDL2").'
@@ -183,14 +183,14 @@ $sdl_note
 
 Linux: run "python3 install-desktop.py" to add this release to your user app
 menu. Keep the extracted directory in place; rerun after moving or upgrading.
-macOS: open Ninja Master.app in Finder, or run play.sh. This is an unsigned
-app with a system SDL2 dependency, not a notarized standalone distribution.
+macOS: drag Ninja Master.app from the DMG into Applications, then open it.
+Preview builds are ad-hoc signed and are not notarized. If macOS blocks the
+first launch, use System Settings > Privacy & Security > Open Anyway.
 release.json records the version, source revision and SHA-256 of each file.
 The archive's SHA-256 is in its adjacent .sha256 file.
 
 Controls, settings file locations and command-line options are described in
-MANUAL.md (written for a source checkout: substitute the executable or the
-launcher for "tools/run-native.sh").
+MANUAL.md.
 EOF
 
 cat > "$stage/LICENSE-NOTES.txt" <<'EOF'
@@ -206,9 +206,8 @@ license; see LICENSE. The license does not cover Sega's game content.
 Third-party license texts are included in third-party-licenses/.
 
 Third-party components:
-- SDL2 (https://libsdl.org), zlib license. Windows packages ship SDL2.dll and
-  its license text as LICENSE-SDL2.txt; Linux and macOS packages link the
-  system library.
+- SDL2 (https://libsdl.org), zlib license. Windows and macOS packages include
+  the runtime and license notices; Linux packages use the system library.
 - Rust dependencies: see THIRD-PARTY-NOTICES.txt and third-party-licenses/.
 - Dear ImGui and imgui/imgui-sys (https://github.com/imgui-rs/imgui-rs), MIT
   and MIT/Apache-2.0 respectively. See upstream projects for license texts.

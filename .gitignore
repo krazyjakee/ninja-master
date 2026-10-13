@@ -9,6 +9,10 @@ rom/
 *.zip
 *.7z
 *.tar.gz
+*.deb
+*.rpm
+*.dmg
+*.msi
 
 # Build output and local game data
 obj/
