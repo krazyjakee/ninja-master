@@ -21,6 +21,7 @@ jobs:
   build:
     name: ${{ matrix.platform }} ${{ matrix.arch }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -63,6 +64,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev pkg-config dpkg-dev rpm desktop-file-utils
       - name: Install macOS tools
         if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
         run: brew install sdl2 pkg-config
       - name: Install Windows SDL2
         if: runner.os == 'Windows'
