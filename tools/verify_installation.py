@@ -40,7 +40,8 @@ def run(executable):
 
 def windows(installer, workspace):
     directory = workspace / "installed"
-    log = workspace / "install.log"
+    log = Path("obj/dist/msi-install.log").resolve()
+    uninstall_log = Path("obj/dist/msi-uninstall.log").resolve()
     print("Installing MSI", flush=True)
     result = subprocess.run(["msiexec", "/i", str(installer), "/qn", "/norestart", f"INSTALLDIR={directory}", "/l*v", str(log)], timeout=120)
     if result.returncode not in (0, 3010):
@@ -51,11 +52,13 @@ def windows(installer, workspace):
         sentinel = directory / "user-cartridge.bin"
         sentinel.write_bytes(b"user-owned file must survive uninstall")
     finally:
-        result = subprocess.run(["msiexec", "/x", str(installer), "/qn", "/norestart"], timeout=120)
+        print("Uninstalling MSI", flush=True)
+        result = subprocess.run(["msiexec", "/x", str(installer), "/qn", "/norestart", "/l*v", str(uninstall_log)], timeout=120)
         if result.returncode not in (0, 3010):
             raise RuntimeError("MSI uninstall failed")
     assert sentinel.read_bytes() == b"user-owned file must survive uninstall"
-    assert not (directory / "ninja-master-native.exe").exists()
+    if (directory / "ninja-master-native.exe").exists():
+        raise RuntimeError("MSI left its executable behind; see msi-install.log and msi-uninstall.log")
 
 
 def macos(image, workspace):

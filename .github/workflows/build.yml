@@ -138,6 +138,13 @@ jobs:
       - name: Validate RPM on Fedora
         if: runner.os == 'Linux'
         run: docker run --rm -v "$PWD/obj/dist:/packages:ro" fedora:latest bash -c 'dnf install -y /packages/*.rpm && ninja-master --demo --headless --frames 120'
+      - name: Upload failed installer logs
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-logs
+          path: obj/dist/*.log
+          if-no-files-found: ignore
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:

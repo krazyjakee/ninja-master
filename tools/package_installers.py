@@ -185,8 +185,9 @@ def wix_source(stage, manifest, filename):
     add(product, "Package", InstallerVersion="500", Compressed="yes", InstallScope="perUser", Platform="x64")
     add(product, "MajorUpgrade", Schedule="afterInstallInitialize", AllowSameVersionUpgrades="yes", DowngradeErrorMessage="A newer Ninja Master version is already installed.")
     add(product, "MediaTemplate", EmbedCab="yes")
-    for name, value in (("ALLUSERS", "2"), ("MSIINSTALLPERUSER", "1"), ("ARPPRODUCTICON", "AppIcon")):
-        add(product, "Property", Id=name, Value=value)
+    add(product, "Property", Id="ARPPRODUCTICON", Value="AppIcon")
+    location = add(product, "Property", Id="INSTALLDIR", Secure="yes")
+    add(location, "RegistrySearch", Id="InstalledLocation", Root="HKCU", Key="Software\\Ninja Master", Name="InstallLocation", Type="raw", Win64="yes")
     add(product, "Icon", Id="AppIcon", SourceFile=str((stage / "icons/ninja-master.ico").resolve()))
     target = add(product, "Directory", Id="TARGETDIR", Name="SourceDir")
     programs = add(add(target, "Directory", Id="LocalAppDataFolder"), "Directory", Id="UserPrograms", Name="Programs")
@@ -213,6 +214,7 @@ def wix_source(stage, manifest, filename):
         components.append(component_id)
     cleanup = add(install, "Component", Id="Cleanup", Guid=guid("cleanup"), Win64="yes")
     add(cleanup, "RegistryValue", Root="HKCU", Key="Software\\Ninja Master\\Components", Name="Cleanup", Type="integer", Value="1", KeyPath="yes")
+    add(cleanup, "RegistryValue", Root="HKCU", Key="Software\\Ninja Master", Name="InstallLocation", Type="string", Value="[INSTALLDIR]")
     for key, directory in directories.items():
         add(cleanup, "RemoveFolder", Id=identifier("R", key), Directory=directory.attrib["Id"], On="uninstall")
     add(cleanup, "RemoveFolder", Id="RemoveUserPrograms", Directory="UserPrograms", On="uninstall")

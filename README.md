@@ -57,19 +57,6 @@ blocks the first launch, use **System Settings → Privacy & Security → Open A
 Uninstalling the Windows application preserves ROM files you add and your
 settings and saves. Each download has a `.sha256` file for verifying its checksum.
 
-### Running from source
-
-Install Rust/Cargo, a C++ compiler and the SDL2 development libraries
-(`libsdl2-dev` and `pkg-config` on Debian/Ubuntu; `sdl2` and `pkg-config` with
-Homebrew on macOS). From the repository root:
-
-```sh
-cargo run --locked --release --manifest-path native/Cargo.toml -- --rom "/path/to/your/game.bin"
-```
-
-On Linux and macOS, `./scripts/play.sh --rom "/path/to/your/game.bin"` also builds
-and launches the game. Building the application does not require a ROM.
-
 ## Compatible ROM
 
 **Only the original 1993 USA / NTSC-U release of _Shinobi III: Return of the

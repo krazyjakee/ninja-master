@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
-from bundle_macos import minimum_version
+from bundle_macos import dependencies, minimum_version
 from package_installers import WIX, deb, linux_tree, validate, wix_source
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -120,6 +120,17 @@ Load command 3
 """
         with patch("bundle_macos.subprocess.check_output", return_value=output):
             self.assertEqual(minimum_version(Path("synthetic.dylib")), (15, 0))
+
+    def test_macos_universal_library_headers_are_not_dependencies(self):
+        output = """/bundle/SDL2 (architecture x86_64):
+\t@rpath/SDL2 (compatibility version 1.0.0, current version 1.0.0)
+\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)
+/bundle/SDL2 (architecture arm64):
+\t@rpath/SDL2 (compatibility version 1.0.0, current version 1.0.0)
+\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)
+"""
+        with patch("bundle_macos.subprocess.check_output", return_value=output):
+            self.assertEqual(dependencies(Path("SDL2")), ["@rpath/SDL2", "/usr/lib/libSystem.B.dylib"] * 2)
 
 
 if __name__ == "__main__":

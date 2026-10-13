@@ -9,7 +9,8 @@ import subprocess
 
 def dependencies(path):
     output = subprocess.check_output(["otool", "-L", str(path)], text=True)
-    return [line.strip().split(" (", 1)[0] for line in output.splitlines()[1:] if " (" in line]
+    return [line.strip().split(" (", 1)[0] for line in output.splitlines()
+            if line[:1].isspace() and " (" in line]
 
 
 def system_library(name):
