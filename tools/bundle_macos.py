@@ -33,6 +33,10 @@ def resolve(name, source):
     if name.startswith("/"):
         return Path(name).resolve(strict=True)
     leaf = Path(name).name
+    if name.startswith("@rpath/") and os.environ.get("SDL2_ROOT"):
+        candidate = Path(os.environ["SDL2_ROOT"]) / name.removeprefix("@rpath/")
+        if candidate.is_file():
+            return candidate.resolve()
     for directory in (source.parent, Path("/opt/homebrew/lib"), Path("/usr/local/lib")):
         candidate = directory / leaf
         if candidate.is_file():

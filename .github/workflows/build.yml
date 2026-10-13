@@ -16,6 +16,7 @@ env:
   PYTHON: python
   SDL2_VERSION: 2.32.10
   SDL2_VC_SHA256: af347939395a58b365846aaea27391e69f9ec9d4dd650d6ac40802159b418a6e
+  SDL2_DMG_SHA256: 4a7ac31640d70214e848f994be8a12849c0f97918a7e6c2e27a40036166d1a7f
 
 jobs:
   build:
@@ -64,10 +65,19 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev pkg-config dpkg-dev rpm desktop-file-utils
       - name: Install macOS tools
         if: runner.os == 'macOS'
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: '1'
-          HOMEBREW_NO_INSTALL_CLEANUP: '1'
-        run: brew install sdl2 pkg-config
+        run: |
+          image="$RUNNER_TEMP/SDL2.dmg"
+          mount="$RUNNER_TEMP/sdl2-mount"
+          root="$RUNNER_TEMP/sdl2-sdk"
+          curl -fsSL "https://github.com/libsdl-org/SDL/releases/download/release-$SDL2_VERSION/SDL2-$SDL2_VERSION.dmg" -o "$image"
+          printf '%s  %s\n' "$SDL2_DMG_SHA256" "$image" | shasum -a 256 -c -
+          mkdir -p "$mount" "$root"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$image"
+          ditto "$mount/SDL2.framework" "$root/SDL2.framework"
+          hdiutil detach "$mount"
+          curl -fsSL "https://raw.githubusercontent.com/libsdl-org/SDL/release-$SDL2_VERSION/LICENSE.txt" -o "$root/LICENSE.txt"
+          echo "SDL2_ROOT=$root" >> "$GITHUB_ENV"
+          echo "RUSTFLAGS=-L framework=$root" >> "$GITHUB_ENV"
       - name: Install Windows SDL2
         if: runner.os == 'Windows'
         shell: pwsh

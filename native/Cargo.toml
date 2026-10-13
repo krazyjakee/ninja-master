@@ -24,8 +24,8 @@ glow = { version = "=0.17.0", optional = true }
 sdl2 = { version = "=0.38.0", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# Discover Homebrew's SDL2 library path for both launchers and direct Cargo builds.
-sdl2 = { version = "=0.38.0", optional = true, features = ["use-pkgconfig"] }
+# Link the original SDL2 framework supplied by the macOS build.
+sdl2 = { version = "=0.38.0", optional = true, features = ["use_mac_framework"] }
 
 # Keep debug builds responsive during gameplay.
 [profile.dev]

@@ -53,6 +53,9 @@ def prepare(stage, root, platform, version, arch):
         if sys.platform == "darwin":
             from bundle_macos import bundle
             info["LSMinimumSystemVersion"] = bundle(stage / "Ninja Master.app")
+            import os
+            runtime_license = Path(os.environ["SDL2_ROOT"]) / "LICENSE.txt"
+            shutil.copyfile(runtime_license, contents / "Resources/LICENSE-SDL2.txt")
         (contents / "Info.plist").write_bytes(plistlib.dumps(info))
         if sys.platform == "darwin":
             from bundle_macos import sign

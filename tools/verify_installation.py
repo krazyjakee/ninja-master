@@ -28,10 +28,12 @@ def architecture(executable, platform, arch):
 
 
 def run(executable):
-    result = subprocess.run([str(executable), "--demo", "--headless", "--frames", "120"], capture_output=True, text=True, check=True)
+    print(f"Starting cartridge-free smoke: {executable}", flush=True)
+    result = subprocess.run([str(executable), "--demo", "--headless", "--frames", "120"], capture_output=True, text=True, check=True, timeout=45)
     if "frame=3a0419cf3d3b1731" not in result.stdout:
         raise RuntimeError(f"unexpected engine smoke result: {result.stdout} {result.stderr}")
-    missing = subprocess.run([str(executable), "--boot", "--headless", "--frames", "1", "--rom", str(Path(executable).parent / "missing-cartridge.bin")], capture_output=True, text=True)
+    print("Checking missing-cartridge rejection", flush=True)
+    missing = subprocess.run([str(executable), "--boot", "--headless", "--frames", "1", "--rom", str(Path(executable).parent / "missing-cartridge.bin")], capture_output=True, text=True, timeout=45)
     if missing.returncode == 0:
         raise RuntimeError("startup unexpectedly succeeded without a cartridge")
 
@@ -39,7 +41,8 @@ def run(executable):
 def windows(installer, workspace):
     directory = workspace / "installed"
     log = workspace / "install.log"
-    result = subprocess.run(["msiexec", "/i", str(installer), "/qn", "/norestart", f"INSTALLDIR={directory}", "/l*v", str(log)])
+    print("Installing MSI", flush=True)
+    result = subprocess.run(["msiexec", "/i", str(installer), "/qn", "/norestart", f"INSTALLDIR={directory}", "/l*v", str(log)], timeout=120)
     if result.returncode not in (0, 3010):
         raise RuntimeError(log.read_text(errors="replace"))
     try:
@@ -48,7 +51,7 @@ def windows(installer, workspace):
         sentinel = directory / "user-cartridge.bin"
         sentinel.write_bytes(b"user-owned file must survive uninstall")
     finally:
-        result = subprocess.run(["msiexec", "/x", str(installer), "/qn", "/norestart"])
+        result = subprocess.run(["msiexec", "/x", str(installer), "/qn", "/norestart"], timeout=120)
         if result.returncode not in (0, 3010):
             raise RuntimeError("MSI uninstall failed")
     assert sentinel.read_bytes() == b"user-owned file must survive uninstall"
@@ -58,7 +61,8 @@ def windows(installer, workspace):
 def macos(image, workspace):
     mount = workspace / "mounted"
     mount.mkdir()
-    subprocess.run(["hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", str(mount), str(image)], check=True)
+    print("Mounting DMG", flush=True)
+    subprocess.run(["hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", str(mount), str(image)], check=True, timeout=120)
     try:
         installed = workspace / "Ninja Master.app"
         shutil.copytree(mount / "Ninja Master.app", installed, symlinks=True)
