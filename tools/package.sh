@@ -141,8 +141,8 @@ Ninja Master native port ($version, $platform $arch)
 =================================================
 
 A native PC port of Shinobi III: Return of the Ninja Master (Sega Mega Drive /
-Genesis, 1993). All rounds are accessible; gameplay and presentation retain
-documented native simplifications. It is not a complete-game port.
+Genesis, 1993), complete and playable from start to finish across all seven
+rounds. Full playthroughs have been tested on Linux and Windows.
 
 YOU MUST SUPPLY YOUR OWN ROM
 ----------------------------
@@ -185,7 +185,7 @@ $sdl_note
 Linux: run "python3 install-desktop.py" to add this release to your user app
 menu. Keep the extracted directory in place; rerun after moving or upgrading.
 macOS: drag Ninja Master.app from the DMG into Applications, then open it.
-Preview builds are ad-hoc signed and are not notarized. If macOS blocks the
+Mac apps are ad-hoc signed and are not notarized. If macOS blocks the
 first launch, use System Settings > Privacy & Security > Open Anyway.
 release.json records the version, source revision and SHA-256 of each file.
 The archive's SHA-256 is in its adjacent .sha256 file.

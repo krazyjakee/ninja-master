@@ -13,11 +13,10 @@
 
 **Ninja Master** brings *Shinobi III: Return of the Ninja Master* to the desktop
 with native gameplay, widescreen presentation, rebindable controls and quick
-saves. Graphics, music and stage data load directly from your own cartridge dump.
+saves. Graphics, music, sound and stage data load directly from your own cartridge dump.
 
-This is an unofficial, work-in-progress port. All seven rounds are accessible,
-but movement, encounters and sound can differ from the original game; a complete
-playthrough is not guaranteed in this version.
+This complete, unofficial port includes all seven rounds and is playable from
+start to finish. Full playthroughs have been tested on **Linux and Windows**.
 
 ## Getting started
 
@@ -52,8 +51,9 @@ installation. DEB and RPM packages install their runtime dependencies through
 your package manager. Linux builds are tested on Ubuntu 24.04 and Fedora;
 older distributions may need newer system libraries.
 
-These preview installers are not publisher signed or notarized. If macOS
-blocks the first launch, use **System Settings → Privacy & Security → Open Anyway**.
+Windows installers are not publisher signed. Mac apps are ad-hoc signed and
+not notarized. If macOS blocks the first launch, use
+**System Settings → Privacy & Security → Open Anyway**.
 Uninstalling the Windows application preserves ROM files you add and your
 settings and saves. Each download has a `.sha256` file for verifying its checksum.
 

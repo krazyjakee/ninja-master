@@ -227,12 +227,12 @@ fn run() -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "Ninja Master native playable slice, engine demo and ROM asset viewer\n\
+                    "Ninja Master: native Shinobi III port, engine demo and ROM asset viewer\n\
                     Usage: ninja-master-native [--headless] [--frames N] [--scripted] [--mute] [--capture FILE.ppm] [--dump-frames DIR]\n\
                     With no mode flag, the desktop build boots the whole game (--boot); headless runs and --round/--substage/--part start play directly (--play).\n\
                     Full game: --boot [--rom FILE] (SEGA logo, story, title, options, attract demo, game, game over/continue, ending)\n\
                     Engine demo: --demo (synthetic test scene)\n\
-                    Playable slice: --play [--round R --substage S [--part P]] [--rom FILE] [--asset-report FILE] [--scripted] (move, run, jump, attack, ninjutsu, pause)\n\
+                    Direct play: --play [--round R --substage S [--part P]] [--rom FILE] [--asset-report FILE] [--scripted] (move, run, jump, attack, ninjutsu, pause)\n\
                     Play continues through substage and round transitions (1-1 -> 1-2 ...), with ROUND CLEAR and the round card between rounds.\n\
                     Start (Enter) or Escape pauses: Up/Down/Left/Right select the ninjutsu, Start resumes, B then C quits to the title menu (its QUIT ends the program).\n\
                     Replay: --headless --play --input-script FILE [--trace FILE] [--frames N]\n\
@@ -349,7 +349,7 @@ fn run() -> Result<(), String> {
         return Err("--asset-report requires --assets, --play or --sound".into());
     }
     if options.assets && options.scripted {
-        return Err("--scripted applies only to the engine demo or playable slice".into());
+        return Err("--scripted applies only to the engine demo or gameplay".into());
     }
     let mut effects = [true; 4];
     for name in &options.disabled_effects {
@@ -570,7 +570,7 @@ fn run() -> Result<(), String> {
         ),
         Scene::Play(modes) => match modes.game() {
             Some(game) => println!(
-                "Playable slice: round={}-{} part={} ticks={ticks} frame={:016x} position=({}, {}) camera=({}, {}) grounded={} music=${:02x} mode={}",
+                "Game: round={}-{} part={} ticks={ticks} frame={:016x} position=({}, {}) camera=({}, {}) grounded={} music=${:02x} mode={}",
                 game.stage_id.round,
                 game.stage_id.substage,
                 game.part(),
@@ -584,7 +584,7 @@ fn run() -> Result<(), String> {
                 modes.name()
             ),
             None => println!(
-                "Playable slice: ticks={ticks} frame={:016x} mode={}",
+                "Game: ticks={ticks} frame={:016x} mode={}",
                 frame.checksum(),
                 modes.name()
             ),
