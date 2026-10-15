@@ -589,6 +589,9 @@ fn run() -> Result<(), String> {
                 modes.name()
             ),
         },
+        Scene::Assets(_) if options.sound => {
+            println!("Sound demo: ticks={ticks} frame={:016x}", frame.checksum())
+        }
         Scene::Assets(viewer) => println!(
             "Asset viewer: round={}-{} part={} view={:?} page={} ticks={ticks} frame={:016x} camera=({}, {})",
             viewer.assets.data.id.round,
