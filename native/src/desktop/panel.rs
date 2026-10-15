@@ -125,7 +125,7 @@ impl Panel {
         ui.checkbox("True widescreen", &mut settings.widescreen);
         help(
             ui,
-            "Shows more of the stage in 16:9 with unchanged sprite proportions. Turn off for the original view.",
+            "Shows more of the stage to fit your window or monitor, including ultrawide displays, with unchanged sprite proportions. Turn off for the original view.",
         );
         ui.checkbox("Fullscreen (F11)", &mut settings.fullscreen);
         let mut scale = settings.scale as i32;
@@ -142,7 +142,7 @@ impl Panel {
             "Sets the window size. Fullscreen uses the desktop resolution.",
         );
         if settings.widescreen {
-            ui.text("Aspect ratio: Widescreen (16:9)");
+            ui.text("Aspect ratio: Matches window / monitor");
         } else {
             ui.combo_simple_string(
                 "Aspect ratio",
@@ -157,7 +157,7 @@ impl Panel {
         ui.checkbox("Integer scaling", &mut settings.integer_scale);
         help(
             ui,
-            "Uses whole pixel multiples when they fit. Small windows fit the frame without cropping.",
+            "Uses whole pixel multiples when they fit. This can leave borders; turn off to fill more of the display.",
         );
         ui.checkbox("Smooth wave effects", &mut settings.smooth_wave_effects);
         help(

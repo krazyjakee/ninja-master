@@ -116,8 +116,10 @@ panel is open; pause first if you need time to adjust settings.
 | **F9 / F10** | Lower / raise volume |
 | **F11** | Toggle fullscreen |
 
-**Display** offers true widescreen, the original 320×224 view, optional CRT
-effects and scanlines. **Controls** lets you rebind keys and choose a controller.
+**Display** offers widescreen that adapts to your window or monitor, including
+ultrawide displays, the original 320×224 view, optional CRT effects and scanlines.
+Integer scaling preserves whole pixels; turn it off to use the full display height.
+**Controls** lets you rebind keys and choose a controller.
 **Saves** provides eight slots. **Art packs** lets you select custom artwork or
 return to the original graphics from your ROM.
 

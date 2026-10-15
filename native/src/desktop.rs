@@ -181,15 +181,42 @@ fn art_output_scale(rect: Rect, width: usize) -> usize {
         .max(1)
 }
 
-fn fit_art_to_window(
+fn view_width(width: u32, height: u32, settings: &Settings) -> usize {
+    if !settings.widescreen || width == 0 || height == 0 {
+        return WIDTH;
+    }
+    let integer_scale = height / HEIGHT as u32;
+    let width = if settings.integer_scale && integer_scale > 0 {
+        u64::from(width / integer_scale)
+    } else {
+        (u64::from(width) * HEIGHT as u64 + u64::from(height) / 2) / u64::from(height)
+    };
+    // A nearly collapsed window must not allocate an enormous world view.
+    width.clamp(WIDTH as u64, 4096) as usize
+}
+
+fn fit_frame_to_output(frame: &mut Frame, width: u32, height: u32, settings: &Settings) -> bool {
+    let view_width = view_width(width, height, settings);
+    let resized = frame.width() != view_width;
+    if resized {
+        let pack = frame.art_pack();
+        *frame = Frame::new(view_width);
+        frame.set_art_pack(pack);
+    }
+    frame.smooth_wave_effects = settings.smooth_wave_effects;
+    frame.set_output_scale(art_output_scale(
+        presentation_rect(width, height, settings),
+        view_width,
+    )) || resized
+}
+
+fn fit_frame_to_window(
     frame: &mut Frame,
     canvas: &WindowCanvas,
     settings: &Settings,
 ) -> Result<bool, String> {
-    Ok(frame.set_output_scale(art_output_scale(
-        game_rect(canvas, settings)?,
-        frame.width(),
-    )))
+    let (width, height) = canvas.output_size()?;
+    Ok(fit_frame_to_output(frame, width, height, settings))
 }
 
 /// Change window modes only after presenting the frame, when SDL has no queued
@@ -227,7 +254,7 @@ fn presentation_rect(width: u32, height: u32, settings: &Settings) -> Rect {
         return Rect::new(0, 0, width.max(1), height.max(1));
     }
     let base_width = if settings.widescreen {
-        settings.frame_width() as f64
+        view_width(width, height, settings) as f64
     } else if settings.aspect == 1 {
         HEIGHT as f64 * 4.0 / 3.0
     } else {
@@ -414,7 +441,7 @@ pub(super) fn run(
         builder
     };
     let mut canvas = builder.build().map_err(|error| error.to_string())?;
-    fit_art_to_window(frame, &canvas, &settings)?;
+    fit_frame_to_window(frame, &canvas, &settings)?;
     let mut events = sdl.event_pump()?;
     // rust-sdl2 has no safe runtime vsync setter. Probe before long-lived
     // textures exist, then rebuild the renderer if a clock is required.
@@ -931,7 +958,7 @@ pub(super) fn run(
             break 'running;
         }
 
-        if fit_art_to_window(frame, &canvas, &settings)? {
+        if fit_frame_to_window(frame, &canvas, &settings)? {
             texture = creator
                 .create_texture_streaming(
                     PixelFormatEnum::RGB24,
@@ -1115,7 +1142,7 @@ pub(super) fn run(
                         panel.set_art_selection(&settings.art_pack);
                         panel.gallery.set_art_pack(pack.clone());
                         frame.set_art_pack(pack);
-                        fit_art_to_window(frame, &canvas, &settings)?;
+                        fit_frame_to_window(frame, &canvas, &settings)?;
                         texture = creator
                             .create_texture_streaming(
                                 PixelFormatEnum::RGB24,
@@ -1142,21 +1169,6 @@ pub(super) fn run(
                     text_input_active = wants_text;
                 }
                 if before != settings {
-                    if before.widescreen != settings.widescreen {
-                        let pack = frame.art_pack();
-                        *frame = Frame::new(settings.frame_width());
-                        frame.set_art_pack(pack);
-                        fit_art_to_window(frame, &canvas, &settings)?;
-                        frame.smooth_wave_effects = settings.smooth_wave_effects;
-                        texture = creator
-                            .create_texture_streaming(
-                                PixelFormatEnum::RGB24,
-                                frame.output_width() as u32,
-                                frame.output_height() as u32,
-                            )
-                            .map_err(|error| error.to_string())?;
-                        scene.draw(frame);
-                    }
                     if before.fullscreen != settings.fullscreen
                         || (!settings.fullscreen
                             && (before.scale != settings.scale
@@ -1467,7 +1479,7 @@ mod tests {
             );
             assert_eq!(
                 presentation_rect(1920, 1080, &settings),
-                Rect::new(164, 92, 1592, 896)
+                Rect::new(0, 92, 1920, 896)
             );
         }
         settings.integer_scale = false;
@@ -1475,6 +1487,82 @@ mod tests {
             presentation_rect(1920, 1080, &settings),
             Rect::new(0, 0, 1919, 1080)
         );
+    }
+
+    #[test]
+    fn widescreen_expands_the_frame_to_fit_ultrawide_displays() {
+        let mut settings = Settings::default();
+        let mut frame = Frame::default();
+        for (width, height, native_width) in [
+            (1920, 1080, 480),
+            (2560, 1080, 640),
+            (3440, 1440, 573),
+            (3840, 1600, 548),
+            (5120, 1440, 853),
+        ] {
+            for aspect in 0..=2 {
+                settings.aspect = aspect;
+                fit_frame_to_output(&mut frame, width, height, &settings);
+                assert_eq!(frame.width(), native_width);
+                assert_eq!(frame.rgb().len(), native_width * HEIGHT * 3);
+                let rect = presentation_rect(width, height, &settings);
+                let scale = height / HEIGHT as u32;
+                assert_eq!(rect.width(), native_width as u32 * scale);
+                assert_eq!(rect.height(), HEIGHT as u32 * scale);
+                assert!(width - rect.width() < scale);
+                assert_eq!(rect.x(), (width - rect.width()) as i32 / 2);
+                assert_eq!(rect.y(), (height - rect.height()) as i32 / 2);
+            }
+        }
+        assert!(!fit_frame_to_output(&mut frame, 5120, 1440, &settings));
+        settings.widescreen = false;
+        assert!(fit_frame_to_output(&mut frame, 5120, 1440, &settings));
+        assert_eq!(frame.width(), WIDTH);
+        assert_eq!(frame.rgb().len(), WIDTH * HEIGHT * 3);
+    }
+
+    #[test]
+    fn fractional_widescreen_matches_display_aspect_without_stretching_sprites() {
+        let settings = Settings {
+            integer_scale: false,
+            ..Settings::default()
+        };
+        for (width, height, native_width) in [
+            (1920, 1080, 398),
+            (2560, 1080, 531),
+            (3440, 1440, 535),
+            (3840, 1600, 538),
+            (5120, 1440, 796),
+            (1920, 1200, 358),
+        ] {
+            assert_eq!(view_width(width, height, &settings), native_width);
+            let rect = presentation_rect(width, height, &settings);
+            assert!(width - rect.width() <= 4);
+            assert!(height - rect.height() <= 4);
+            let horizontal_scale = rect.width() as f64 / native_width as f64;
+            let vertical_scale = rect.height() as f64 / HEIGHT as f64;
+            assert!((horizontal_scale - vertical_scale).abs() < 0.005);
+        }
+    }
+
+    #[test]
+    fn resized_widescreen_preserves_the_original_view_and_render_preferences() {
+        let mut settings = Settings {
+            smooth_wave_effects: false,
+            ..Settings::default()
+        };
+        let mut frame = Frame::default();
+        assert!(fit_frame_to_output(&mut frame, 3440, 1440, &settings));
+        assert!(!frame.smooth_wave_effects);
+        settings.smooth_wave_effects = true;
+        assert!(fit_frame_to_output(&mut frame, 1194, 672, &settings));
+        assert_eq!(frame.width(), ninja_master_native::WIDE_WIDTH);
+        assert!(frame.smooth_wave_effects);
+        assert_eq!(view_width(199, 112, &settings), 398);
+        assert_eq!(view_width(1080, 1920, &settings), WIDTH);
+        assert_eq!(view_width(3440, 0, &settings), WIDTH);
+        assert_eq!(view_width(0, 1440, &settings), WIDTH);
+        assert_eq!(view_width(3440, 1, &settings), 4096);
     }
 
     #[test]

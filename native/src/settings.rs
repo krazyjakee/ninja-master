@@ -122,7 +122,7 @@ pub struct Settings {
     /// Initial window size as a multiple of the selected frame size.
     pub scale: u32,
     pub fullscreen: bool,
-    /// Expand gameplay to approximately 16:9 without stretching pixels.
+    /// Expand gameplay to fit the window's width without stretching pixels.
     pub widescreen: bool,
     /// 0: native pixels, 1: 4:3, 2: fill the window.
     pub aspect: usize,
@@ -203,6 +203,7 @@ fn write_list(names: &[String]) -> String {
 }
 
 impl Settings {
+    /// Initial window width. The desktop adapts the game view when resized.
     pub fn frame_width(&self) -> usize {
         if self.widescreen {
             crate::WIDE_WIDTH

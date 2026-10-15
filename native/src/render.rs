@@ -1293,50 +1293,52 @@ mod tests {
 
     #[test]
     fn widescreen_pixels_tiles_and_raster_changes_cover_both_sides() {
-        let mut frame = Frame::new(crate::WIDE_WIDTH);
-        let mut palette = [[0; 3]; 16];
-        palette[1] = [255, 0, 0];
-        let tile = Tile([0x11; 32]);
-        let left = frame.view_left();
-        let right = frame.view_right();
-        frame.clear_backdrop(PaletteRef::Cram(0, &palette), 1);
-        frame.tile(
-            &tile,
-            PaletteRef::Cram(0, &palette),
-            left - 4,
-            30,
-            Flip::default(),
-        );
-        frame.tile(
-            &tile,
-            PaletteRef::Cram(0, &palette),
-            right - 4,
-            30,
-            Flip::default(),
-        );
-        palette[1] = [0, 255, 0];
-        frame.change_cram_line(CramChange {
-            line: 32,
-            cram_line: 0,
-            colors: palette,
-        });
-        frame.clip_lines(Some(34));
-        frame.pixel(left, 33, [0, 0, 255]);
-        frame.pixel(right - 1, 34, [0, 0, 255]);
-        let pixel = |x, y| {
-            let at = (y * frame.width() + x) * 3;
-            &frame.rgb()[at..at + 3]
-        };
-        for x in [0, frame.width() - 1] {
-            assert_eq!(pixel(x, 31), [255, 0, 0]);
-            assert_eq!(pixel(x, 32), [0, 255, 0]);
-            assert_eq!(pixel(x, 34), [0, 255, 0]);
+        for width in [crate::WIDE_WIDTH, 535, 573, 796, 853] {
+            let mut frame = Frame::new(width);
+            let mut palette = [[0; 3]; 16];
+            palette[1] = [255, 0, 0];
+            let tile = Tile([0x11; 32]);
+            let left = frame.view_left();
+            let right = frame.view_right();
+            frame.clear_backdrop(PaletteRef::Cram(0, &palette), 1);
+            frame.tile(
+                &tile,
+                PaletteRef::Cram(0, &palette),
+                left - 4,
+                30,
+                Flip::default(),
+            );
+            frame.tile(
+                &tile,
+                PaletteRef::Cram(0, &palette),
+                right - 4,
+                30,
+                Flip::default(),
+            );
+            palette[1] = [0, 255, 0];
+            frame.change_cram_line(CramChange {
+                line: 32,
+                cram_line: 0,
+                colors: palette,
+            });
+            frame.clip_lines(Some(34));
+            frame.pixel(left, 33, [0, 0, 255]);
+            frame.pixel(right - 1, 34, [0, 0, 255]);
+            let pixel = |x, y| {
+                let at = (y * frame.width() + x) * 3;
+                &frame.rgb()[at..at + 3]
+            };
+            for x in [0, frame.width() - 1] {
+                assert_eq!(pixel(x, 31), [255, 0, 0]);
+                assert_eq!(pixel(x, 32), [0, 255, 0]);
+                assert_eq!(pixel(x, 34), [0, 255, 0]);
+            }
+            assert_eq!(pixel(0, 33), [0, 0, 255]);
+            let mut ppm = Vec::new();
+            frame.write_ppm(&mut ppm).unwrap();
+            assert!(ppm.starts_with(format!("P6\n{width} 224\n255\n").as_bytes()));
+            assert_eq!(frame.rgb().len(), width * HEIGHT * 3);
         }
-        assert_eq!(pixel(0, 33), [0, 0, 255]);
-        let mut ppm = Vec::new();
-        frame.write_ppm(&mut ppm).unwrap();
-        assert!(ppm.starts_with(b"P6\n398 224\n255\n"));
-        assert_eq!(frame.rgb().len(), crate::WIDE_WIDTH * HEIGHT * 3);
     }
 
     #[test]
