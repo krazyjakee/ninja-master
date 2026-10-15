@@ -192,6 +192,36 @@ fn fit_art_to_window(
     )))
 }
 
+/// Change window modes only after presenting the frame, when SDL has no queued
+/// game or panel draws using the previous drawable dimensions.
+fn apply_window_settings(canvas: &mut WindowCanvas, settings: &Settings) -> Result<(), String> {
+    let fullscreen = if settings.fullscreen {
+        FullscreenType::Desktop
+    } else {
+        FullscreenType::Off
+    };
+    if canvas.window().fullscreen_state() != fullscreen {
+        canvas.window_mut().set_fullscreen(fullscreen)?;
+    }
+    if !settings.fullscreen {
+        let size = (
+            settings.frame_width() as u32 * settings.scale,
+            HEIGHT as u32 * settings.scale,
+        );
+        if canvas.window().size() != size {
+            canvas
+                .window_mut()
+                .set_size(size.0, size.1)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    // Discard the panel's clipping and the old window's viewport. Windows can
+    // resize the drawable synchronously while changing fullscreen styles.
+    canvas.set_clip_rect(None);
+    canvas.set_viewport(None);
+    Ok(())
+}
+
 fn presentation_rect(width: u32, height: u32, settings: &Settings) -> Rect {
     if !settings.widescreen && settings.aspect == 2 {
         return Rect::new(0, 0, width.max(1), height.max(1));
@@ -534,6 +564,7 @@ pub(super) fn run(
     'running: loop {
         let mut status = None;
         let mut settings_changed = false;
+        let mut window_settings_changed = false;
         let mut had_event = false;
         for event in events.poll_iter() {
             had_event = true;
@@ -707,11 +738,7 @@ pub(super) fn run(
                         }
                         Scancode::F11 => {
                             settings.fullscreen = !settings.fullscreen;
-                            canvas.window_mut().set_fullscreen(if settings.fullscreen {
-                                FullscreenType::Desktop
-                            } else {
-                                FullscreenType::Off
-                            })?;
+                            window_settings_changed = true;
                             settings_changed = true;
                             repaint = true;
                         }
@@ -723,13 +750,7 @@ pub(super) fn run(
                             };
                             settings.scale = scale.clamp(settings::MIN_SCALE, settings::MAX_SCALE);
                             if !settings.fullscreen {
-                                canvas
-                                    .window_mut()
-                                    .set_size(
-                                        settings.frame_width() as u32 * settings.scale,
-                                        HEIGHT as u32 * settings.scale,
-                                    )
-                                    .map_err(|error| error.to_string())?;
+                                window_settings_changed = true;
                             }
                             status = Some(format!("scale {}x", settings.scale));
                             settings_changed = true;
@@ -1136,25 +1157,12 @@ pub(super) fn run(
                             .map_err(|error| error.to_string())?;
                         scene.draw(frame);
                     }
-                    if before.fullscreen != settings.fullscreen {
-                        canvas.window_mut().set_fullscreen(if settings.fullscreen {
-                            FullscreenType::Desktop
-                        } else {
-                            FullscreenType::Off
-                        })?;
-                    }
-                    if (before.scale != settings.scale
-                        || before.fullscreen != settings.fullscreen
-                        || before.widescreen != settings.widescreen)
-                        && !settings.fullscreen
+                    if before.fullscreen != settings.fullscreen
+                        || (!settings.fullscreen
+                            && (before.scale != settings.scale
+                                || before.widescreen != settings.widescreen))
                     {
-                        canvas
-                            .window_mut()
-                            .set_size(
-                                settings.frame_width() as u32 * settings.scale,
-                                HEIGHT as u32 * settings.scale,
-                            )
-                            .map_err(|e| e.to_string())?;
+                        window_settings_changed = true;
                     }
                     map = InputMap::new(&settings);
                     if before.smooth_wave_effects != settings.smooth_wave_effects {
@@ -1209,6 +1217,11 @@ pub(super) fn run(
                 }
             }
             last_present = Some(presented);
+            if window_settings_changed {
+                apply_window_settings(&mut canvas, &settings)?;
+                upload = true;
+                repaint = true;
+            }
         }
         if options.frames.is_some_and(|limit| total_ticks >= limit) {
             break;
@@ -1272,6 +1285,114 @@ fn gray_out(pixels: &[u8], output: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires a desktop OpenGL display"]
+    fn fullscreen_round_trips_keep_game_and_panel_rendering() {
+        use sdl2::{pixels::Color, render::ClippingRect};
+
+        let sdl = sdl2::init().unwrap();
+        let video = sdl.video().unwrap();
+        let driver = sdl2::render::drivers()
+            .position(|driver| driver.name == "opengl")
+            .unwrap() as u32;
+        let mut settings = Settings {
+            widescreen: false,
+            scale: 1,
+            ..Settings::default()
+        };
+        let window = video
+            .window(
+                "Fullscreen rendering regression",
+                WIDTH as u32,
+                HEIGHT as u32,
+            )
+            .resizable()
+            .build()
+            .unwrap();
+        let mut canvas = window.into_canvas().index(driver).build().unwrap();
+        let mut events = sdl.event_pump().unwrap();
+        let creator = canvas.texture_creator();
+        let mut texture = creator
+            .create_texture_streaming(PixelFormatEnum::RGB24, 2, 2)
+            .unwrap();
+        let mut gui = gui::Gui::new(&creator, None).unwrap();
+        let mut crt = crt::Crt::new(&video, &mut canvas).unwrap();
+        for shader in [false, true] {
+            for fullscreen in [true, false, true, false] {
+                canvas.clear();
+                gui.draw(&mut canvas, |ui| {
+                    ui.window("Display")
+                        .position([0.0, 0.0], imgui::Condition::Always)
+                        .size([150.0, 80.0], imgui::Condition::Always)
+                        .build(|| {
+                            ui.checkbox("Fullscreen", &mut settings.fullscreen);
+                            settings.fullscreen = fullscreen;
+                        });
+                })
+                .unwrap();
+                // Match both the F1 and F11 paths: finish the old frame before
+                // changing modes, then upload and draw new frames immediately.
+                canvas.present();
+                apply_window_settings(&mut canvas, &settings).unwrap();
+                events.pump_events();
+                assert_eq!(
+                    canvas.window().fullscreen_state(),
+                    if fullscreen {
+                        FullscreenType::Desktop
+                    } else {
+                        FullscreenType::Off
+                    }
+                );
+                assert_eq!(canvas.clip_rect(), ClippingRect::None);
+                // The first swap lets the window system resize its backing
+                // buffer. Subsequent frames must continue accepting new pixels.
+                for color in [[255, 255, 255], [255, 0, 0], [0, 255, 0], [0, 0, 255]] {
+                    std::thread::sleep(Duration::from_millis(16));
+                    events.pump_events();
+                    let pixels = color.repeat(4);
+                    texture.update(None, &pixels, 6).unwrap();
+                    crt.upload(&mut canvas, &pixels, 2, 2).unwrap();
+                    canvas.set_draw_color(Color::BLACK);
+                    canvas.clear();
+                    let rect = game_rect(&canvas, &settings).unwrap();
+                    if shader {
+                        crt.draw(&mut canvas, rect, WIDTH, 0, 0).unwrap();
+                    } else {
+                        canvas.copy(&texture, None, rect).unwrap();
+                    }
+                    gui.draw(&mut canvas, |ui| {
+                        ui.window("Display")
+                            .build(|| ui.text("Rendering after fullscreen"));
+                    })
+                    .unwrap();
+                    if color == [255, 255, 255] {
+                        canvas.present();
+                        continue;
+                    }
+                    let sample = Rect::new(
+                        rect.x() + rect.width() as i32 * 9 / 10,
+                        rect.y() + rect.height() as i32 * 9 / 10,
+                        1,
+                        1,
+                    );
+                    let actual = canvas.read_pixels(sample, PixelFormatEnum::RGB24).unwrap();
+                    for channel in 0..3 {
+                        if color[channel] == 0 {
+                            assert_eq!(actual[channel], 0, "fullscreen={fullscreen}, CRT={shader}");
+                        } else {
+                            assert!(
+                                actual[channel] > 20,
+                                "fullscreen={fullscreen}, CRT={shader}: {actual:?}"
+                            );
+                        }
+                    }
+                    canvas.present();
+                }
+            }
+        }
+        assert_eq!(canvas.window().size(), (WIDTH as u32, HEIGHT as u32));
+    }
 
     #[test]
     fn hd_scale_tracks_actual_viewport_including_4k_and_stretched_windows() {
