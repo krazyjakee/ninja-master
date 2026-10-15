@@ -910,13 +910,6 @@ impl Combat {
     pub(crate) fn next_random(&mut self) -> u16 {
         crate::enemies::next_random(&mut self.random)
     }
-    /// Draw mapping `id` with attribute base `base` at screen `position`,
-    /// from the resident art first (Joe's powered patterns while powered),
-    /// then the scene's tiles.
-    #[allow(clippy::too_many_arguments)]
-    /// [`Self::draw_object`]; `puffs` selects the separate explosion art,
-    /// including in arenas where the scene uses those tile indices for bosses.
-    #[allow(clippy::too_many_arguments)]
     pub fn report(&self) -> String {
         let mut text = format!(
             "Combat: {} original spawn records; recovered enemy sequences\n",

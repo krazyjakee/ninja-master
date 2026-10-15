@@ -241,6 +241,10 @@ impl Combat {
         frame.overlay_rect(left, top, 1, height, color);
         frame.overlay_rect(left + width - 1, top, 1, height, color);
     }
+    /// Draw mapping `id` with attribute base `base` at screen `position`,
+    /// from the resident art first (Joe's powered patterns while powered),
+    /// then the scene's tiles.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn draw_object(
         &self,
         frame: &mut Frame,
@@ -262,6 +266,9 @@ impl Combat {
             false,
         );
     }
+    /// [`Self::draw_object`]; `puffs` selects the separate explosion art,
+    /// including in arenas where the scene uses those tile indices for bosses.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn draw_mapping(
         &self,
         frame: &mut Frame,
