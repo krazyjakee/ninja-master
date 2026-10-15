@@ -1,5 +1,6 @@
 # User-supplied cartridges and archives
 rom/
+roms/
 *.bin
 *.md
 !README.md
