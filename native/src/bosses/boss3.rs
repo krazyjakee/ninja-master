@@ -1,82 +1,7 @@
-//! Round 3 boss: `Boss3_Hydra` (`$2BFF2`), called through `Boss_Jumps`
-//! (issues #41, #52).
+//! Round 3 hydra: scripted movement, weak spot and plane presentation.
 //!
-//! The hydra is a plane, not a sprite: the head is plane B (`Data_02D2EE`,
-//! 24x20 cells at `$E000`, base `$A300`), moved by per-line horizontal and
-//! per-column vertical scroll from its position (`$40`/`$44`, 16.16) plus a
-//! sine wobble (`Func_02D130`), and patched every frame (eyes, mouth, jaw,
-//! wound). Plane A is the procedural corridor that the stage's plane routine
-//! `Func_00319A` draws from the `$3EFF2` map, its mirrored rows and two
-//! generated floor rows. `stage::BossPlanes` recovers the initial corridor
-//! and head; this state machine drives them through [`PlaneOp`]s, which
-//! 3-3; issue #96).
-//!
-//! The list-8 record runs the script at `Data_02C17A` (first `04 FF`, then
-//! `Data_02C16E`: spit, wait, inhale + laser, wait, dive, wait, rise, wait):
-//!
-//! | Command | Routine | Behaviour |
-//! | --- | --- | --- |
-//! | `$00`/`$04` | `$1F8` | drift left 1 px/tick to X `$B8` |
-//! | `$08` | `Func_02CA5E` | HYDRA SHOT: three spit balls (`Data_02CAFE`), mouth frames |
-//! | `$10` | `$258` | dive: left 1.5 px/tick while sinking (accel `$800`) below the floor |
-//! | `$14` | `$2D6` | floor splashes, then rise 1 px/tick at the player's X - 64 |
-//! | `$20` | `$474` | wait `Data_02C480` ticks (by level; NORMAL 120) |
-//! | `$24` | `$4FE` | the jaw part opens, inhales (`Data_02C8E0`), fires the laser |
-//!
-//! Only the weak spot (`$26B`, the record's own box) takes damage, in the
-//! routines that call `Func_02CD94` and not while it flashes; health 15
-//! (16 points). A hit flashes palette line 1 white, opens the jaw, shakes
-//! the wobble, and sends the tongue (list-4 `$3C`) out of the floor; the
-//! boss waits (routine `$18`, HYDRA DAMAGE) until it is back. Face and neck
-//! (`$26C`/`$26D`) deflect weapons; they and `$272` hurt on contact. At
-//! health below zero the head rises, HYDRA DEATH, sinks shaking below the
-//! floor and requests the round clear (`$FF0029` bit 1).
-//!
-//! Native model: the boss record runs the whole encounter, including the
-//! tongue, jaw (`$4C`..`$58`) and laser (list-4 `$6C`..`$78`) state
-//! machines, and packs their state into its `Enemy` ([`State`]). Its four
-//! list-5 `$78` parts are puppets that copy their place from the boss
-//! snapshot; contact damage and the laser are one-tick enemy projectiles
-//! ([`hurtbox`]), because `$78`'s stats carry no contact damage. Neither the
-//! record nor the puppets touch the player themselves
-//! (`Behavior::touches_player`), or `$78`'s zero would knock Joe back
-//! without damage, even while the dying head sinks.
-//!
-//! Presentation (#96), all through `Ctx::plane_op`/`Ctx::palette_op`:
-//! plane B H-scroll per 8-line band and V-scroll per 2-cell column from the
-//! boss position and the `$FF3A00`/`$FF3A02` sine wobble (`Func_02D130`);
-//! the eye patches (`Data_02CD1E`/`Data_02CD46`, `loc_02CE78`), spit vents
-//! (`Data_02D066`, `Func_02D044`), open/shut jaw (`Data_02D8D6`/`Data_02D920`)
-//! and wounds (`Data_02D770..794`); palette line 1's hit flash
-//! (`Func_02CE4C`) and `$6E8` fade back to the health line (`Func_02CE0A`),
-//! its colour 12..15 rotation (`Func_02D072`) and inhale warning
-//! (`Func_02C968`); the laser's plane-A hole (`Func_02D23A`), white corridor
-//! line fading back (`Func_02D1FC`), random backdrop colour, band H-scroll
-//! (`loc_02D1C2`) and the corridor rows' restore (`Func_02D2CC`).
-//! `.loc_02CE78` falls into `Func_02CEA8` a second time, so outside routines
-//! `$18`/`$1C` the wobble and those counters run twice a frame.
-//!
-//! Each of the face, neck and chin also shoves an overlapping Joe out of
-//! the head (`Func_037244`, `crate::combat`'s pusher), dying or not.
-//! The inhale pulls Joe right 1 px/tick (`addq.w #1,$20(a3)`) through
-//! `Signal::PushPlayer`. The three timer tables (`Data_02C480`,
-//! `Data_02C8E0`, `Data_02CC94`) take the `Game_Options` level column
-//! (`Ctx::level`, #96). The spit balls are list-5 `$78` parts (`ROLE_SPIT`)
-//! so that `Object_CollideL3` has the weapons' real boxes: a weapon that
-//! meets one is spent and frees it (`loc_02CB2E`), and their `obj_tile`
-//! bit 15 is set for their first 32 updates. The floor splashes
-//! (`$E000`/`$8000`) and inhale sparkles (`$8000`) are high-priority
-//! sprites over the head and corridor's high cells; the jaw and tongue are
-//! low-priority sprites under them.
-//!
-//! Not modelled: `Func_02D130` returns at once while the player's
-//! `plr_flags` bit 4 (ninjutsu) is set, holding the head's scroll and
-//! wobble phase. Native runs no combat in `Mode_Ninjutsu`, so the head holds
-//! through the technique anyway; only the press frame (`Player_Update`
-//! before `Boss_Update`) differs. The `btst #4,$29(a0)` tests in routines
-//! `$04`, `$10`, `$14`, `$1C` and `$24` read the boss's own `$29`, the low
-//! byte of the script cursor, whose bit 4 is never set, so they never
-//! branch. The spit balls come from list 5's capacity rather than list 4's.
+//! The head is a scrolling plane; list-5 parts copy its packed state.
+//! Contact and laser damage use one-tick projectiles because part stats have no damage.
 
 use super::HealthPalette;
 use crate::{
@@ -229,7 +154,6 @@ pub(crate) struct Hydra {
     splash: Record,
     /// `Data_02C17A`: the four script byte lists.
     scripts: [Vec<u8>; 4],
-    main_script: Vec<u8>,
     first_script: u16,
     start: (i32, i32),
     rest_x: i32,
@@ -286,135 +210,6 @@ pub(crate) struct Hydra {
     laser_white: [u16; 16],
     /// `Data_042422`: the corridor line the laser fades back to (`$2D1FC`).
     corridor: [u16; 16],
-}
-
-impl Hydra {
-    fn load(rom: &[u8]) -> Result<Self> {
-        let mut scripts: [Vec<u8>; 4] = Default::default();
-        for (i, script) in scripts.iter_mut().enumerate() {
-            let mut p = pointer(rom, 0x2c17a + i * 4)?;
-            loop {
-                let b = byte(rom, p)?;
-                script.push(b);
-                p += 1;
-                if b & 0x80 != 0 || script.len() > 32 {
-                    break;
-                }
-            }
-        }
-        let main_script = scripts[0].clone();
-        let words4 = |p: usize| -> Result<[i32; 4]> { Ok(words::<4>(rom, p)?.map(i32::from)) };
-        let mut jitter = [(0, 0); 8];
-        for (i, j) in jitter.iter_mut().enumerate() {
-            *j = (signed(rom, 0x2c43c + i * 2)?, signed(rom, 0x2c44c + i * 2)?);
-        }
-        let mut spits = [Spit {
-            vx: 0,
-            vy: 0,
-            ax: 0,
-            ay: 0,
-            dx: 0,
-            dy: 0,
-        }; 3];
-        for (i, s) in spits.iter_mut().enumerate() {
-            let p = 0x2cafe + i * 16;
-            *s = Spit {
-                vx: long(rom, p)?,
-                vy: long(rom, p + 4)?,
-                ax: signed(rom, p + 8)?,
-                ay: signed(rom, p + 10)?,
-                dx: signed(rom, p + 12)?,
-                dy: signed(rom, p + 14)?,
-            };
-        }
-        let weak = crate::combat::Mapping::load(rom, word(rom, 0x2c13e)?)?.bounds;
-        let patch_list = |mut p: usize| -> Result<Vec<u32>> {
-            let mut list = Vec::new();
-            while let Some(header) = Some(long(rom, p)? as u32).filter(|&h| h != 0) {
-                list.push(header);
-                p += 4;
-                if list.len() > 16 {
-                    return Err("unterminated Hydra patch list".into());
-                }
-            }
-            Ok(list)
-        };
-        let mut laser_widths = [0; 32];
-        for (i, width) in laser_widths.iter_mut().enumerate() {
-            *width = byte(rom, 0x2d006 + i)?;
-        }
-        let flesh = HealthPalette::load(
-            rom,
-            1,
-            (0..16).map(|health| Ok(0x42062 + usize::from(word(rom, 0x2bfca + health * 2)?))),
-        )?;
-        Ok(Self {
-            body: Record::load(rom, 0x2c138)?,
-            face: Record::load(rom, 0x2c522)?,
-            neck: Record::load(rom, 0x2c530)?,
-            chin: Record::load(rom, 0x2c53e)?,
-            jaw: Record::load(rom, 0x2c878)?,
-            tongue: Record::load(rom, 0x2c63c)?,
-            spit_record: Record::load(rom, 0x2ca50)?,
-            laser: Record::load(rom, 0x2cf4e)?,
-            splash: Record::load(rom, 0x2cb64)?,
-            scripts,
-            main_script,
-            first_script: word(rom, 0x2c150)?,
-            start: (long(rom, 0x2c156)?, long(rom, 0x2c15e)?),
-            rest_x: long(rom, 0x2c1fa)?,
-            dive_dx: signed(rom, 0x2c248)?,
-            dive_accel: long(rom, 0x2c276)?,
-            floor_y: long(rom, 0x2c27e)?,
-            dive_end_x: word_i(rom, 0x2c298)?,
-            rise_offset: word_i(rom, 0x2c2b6)?,
-            rise_min_x: i32::from(byte(rom, 0x2c2bb)?),
-            top_y: long(rom, 0x2c302)?,
-            entry_sound: byte(rom, 0x2c251)?,
-            hurt_ticks: word_i(rom, 0x2c33e)?,
-            damage_voice: Table::Voice.command_at(rom, 0x2c355)?,
-            death_drool: word_i(rom, 0x2c396)?,
-            death_voice: Table::Voice.command_at(rom, 0x2c3e9)?,
-            jitter,
-            waits: words4(0x2c480)?,
-            inhales: words4(0x2c8e0)?,
-            drools: words4(0x2cc94)?,
-            spit_sound: byte(rom, 0x2ca5f)?,
-            spit_y: word_i(rom, 0x2cac6)?,
-            spits,
-            hit_step: word(rom, 0x2cddc)?,
-            rest_step: word(rom, 0x2d106)?,
-            inhale_sound: byte(rom, 0x2c937)?,
-            inhale_sound_at: word_i(rom, 0x2c930)?,
-            drop_max: word(rom, 0x2c8d0)? as u8,
-            recoil: word(rom, 0x2c9ac)? as u8,
-            laser_sound: byte(rom, 0x2cf5d)?,
-            laser_ticks: word(rom, 0x2cf9e)? as u8,
-            laser_start: word(rom, 0x2cfae)? as u8,
-            tongue_x: word_i(rom, 0x2c708)?,
-            tongue_rise: long(rom, 0x2c854)?,
-            tongue_sweep: word(rom, 0x2c6d0)? as u8,
-            tongue_step: word_i(rom, 0x2c7a2)?,
-            tongue_drool_dx: long(rom, 0x2c678)? >> 16,
-            tongue_frame: word(rom, 0x2c71a)?,
-            splash_scale: [4, 4, 4, 6, 6, 5, 5, 8],
-            splash_small: word(rom, 0x2cd0e)?,
-            weak,
-            flesh,
-            eyes: [
-                patch_list(pointer(rom, 0x2ce7e)?)?,
-                patch_list(pointer(rom, 0x2ce92)?)?,
-            ],
-            vents: [
-                pointer(rom, 0x2d066)? as u32,
-                pointer(rom, 0x2d06a)? as u32,
-                pointer(rom, 0x2d06e)? as u32,
-            ],
-            laser_widths,
-            laser_white: words(rom, pointer(rom, 0x2d27a)?)?,
-            corridor: words(rom, pointer(rom, 0x2d224)?)?,
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -578,7 +373,7 @@ impl Hydra {
                 Some(&b) if b & 0x80 == 0 => b,
                 _ => {
                     s.script = 0;
-                    match self.main_script.first() {
+                    match self.scripts[0].first() {
                         Some(&b) if b & 0x80 == 0 => b,
                         _ => return,
                     }
@@ -1004,3 +799,5 @@ impl Behavior for Hydra {
         s.store(e);
     }
 }
+
+mod load;

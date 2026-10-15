@@ -2,7 +2,6 @@
 """Verify release checksums, native architecture, installation and startup."""
 import argparse
 import hashlib
-import os
 from pathlib import Path
 import shutil
 import struct

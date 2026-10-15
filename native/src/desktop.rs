@@ -1,4 +1,7 @@
 mod art;
+mod audio;
+mod input;
+mod presentation;
 // OpenGL/SDL interop is confined to this presentation module.
 #[allow(unsafe_code)]
 mod crt;
@@ -7,27 +10,26 @@ mod gui;
 mod panel;
 mod rom_picker;
 
+use audio::{open_audio, track_name};
+use input::{InputMap, RESERVED_KEYS};
+use presentation::{fit_art_to_window, game_rect, gray_out, scanlines, set_icon};
 pub(crate) use rom_picker::pick_rom;
 
 use crate::{Options, Scene};
 use ninja_master_native::{
-    HEIGHT, WIDTH,
+    HEIGHT,
     art_pack::{ArtPack, export_template, library_directory, resolve_selection, selection_value},
-    audio_output::{AudioConsumer, AudioProducer, audio_ring},
     devtools::DevTools,
     input::{Button, InputLatch},
     render::Frame,
-    settings::{self, Bindings, Device, Rebinder, Settings},
+    settings::{self, Device, Rebinder, Settings},
     timing::{FixedClock, RefreshProbe},
 };
 use sdl2::{
-    audio::{AudioCallback, AudioDevice, AudioSpecDesired},
-    controller::{Axis, Button as PadButton, GameController},
+    controller::{Axis, GameController},
     event::{Event, WindowEvent},
     keyboard::Scancode,
     pixels::PixelFormatEnum,
-    rect::Rect,
-    render::WindowCanvas,
     video::FullscreenType,
 };
 use std::{
@@ -37,122 +39,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Bindings resolved to SDL values; indexed by `Button as usize`.
-struct InputMap {
-    keys: [Vec<Scancode>; Button::COUNT],
-    pads: [Vec<PadButton>; Button::COUNT],
-}
-
-impl InputMap {
-    /// Unknown names are reported and dropped. A button whose configured
-    /// names are all unknown falls back to its default binding.
-    fn new(settings: &Settings) -> Self {
-        fn resolve<T>(
-            bindings: &Bindings,
-            defaults: &Bindings,
-            device: &str,
-            parse: impl Fn(&str) -> Option<T>,
-        ) -> [Vec<T>; Button::COUNT] {
-            std::array::from_fn(|index| {
-                let button = Button::ALL[index];
-                let names = bindings.get(button);
-                let mut resolved = Vec::new();
-                for name in names {
-                    match parse(name.as_str()) {
-                        Some(value) => resolved.push(value),
-                        None => eprintln!("settings: unknown {device} input {name:?} ignored"),
-                    }
-                }
-                if resolved.is_empty() && !names.is_empty() {
-                    resolved = defaults
-                        .get(button)
-                        .iter()
-                        .filter_map(|name| parse(name.as_str()))
-                        .collect();
-                }
-                resolved
-            })
-        }
-        Self {
-            keys: resolve(
-                &settings.keyboard,
-                &Bindings::default_keyboard(),
-                "keyboard",
-                Scancode::from_name,
-            ),
-            pads: resolve(
-                &settings.gamepad,
-                &Bindings::default_gamepad(),
-                "gamepad",
-                PadButton::from_string,
-            ),
-        }
-    }
-
-    fn keyboard_mask(&self, keys: &HashSet<Scancode>) -> u16 {
-        Button::ALL.iter().fold(0, |mask, button| {
-            mask | if self.keys[*button as usize]
-                .iter()
-                .any(|key| keys.contains(key))
-            {
-                button.mask()
-            } else {
-                0
-            }
-        })
-    }
-
-    fn controller_mask(&self, pad: &GameController) -> u16 {
-        let mut mask = Button::ALL.iter().fold(0, |mask, button| {
-            mask | if self.pads[*button as usize]
-                .iter()
-                .any(|binding| pad.button(*binding))
-            {
-                button.mask()
-            } else {
-                0
-            }
-        });
-        // The left stick always mirrors the D-pad; it is not rebindable.
-        let x = pad.axis(Axis::LeftX);
-        let y = pad.axis(Axis::LeftY);
-        for (active, button) in [
-            (x < -16_000, Button::Left),
-            (x > 16_000, Button::Right),
-            (y < -16_000, Button::Up),
-            (y > 16_000, Button::Down),
-        ] {
-            if active {
-                mask |= button.mask();
-            }
-        }
-        mask
-    }
-
-    fn mask(&self, keys: &HashSet<Scancode>, pads: &[GameController], controller: &str) -> u16 {
-        pads.iter()
-            .filter(|pad| controller.is_empty() || pad.name() == controller)
-            .fold(self.keyboard_mask(keys), |mask, pad| {
-                mask | self.controller_mask(pad)
-            })
-    }
-}
-
-/// Front-end keys that are never bound to pad controls.
-const RESERVED_KEYS: [Scancode; 11] = [
-    Scancode::Escape,
-    Scancode::Backspace,
-    Scancode::F1,
-    Scancode::F2,
-    Scancode::F5,
-    Scancode::F6,
-    Scancode::F7,
-    Scancode::F8,
-    Scancode::F9,
-    Scancode::F10,
-    Scancode::F11,
-];
-
 fn save_settings(path: Option<&Path>, settings: &Settings) {
     if let Some(path) = path
         && let Err(error) = settings.save(path)
@@ -161,136 +47,8 @@ fn save_settings(path: Option<&Path>, settings: &Settings) {
     }
 }
 
-fn set_title(canvas: &mut WindowCanvas, title: &str) -> Result<(), String> {
-    canvas
-        .window_mut()
-        .set_title(title)
-        .map_err(|error| error.to_string())
-}
-
-/// The largest whole multiple of the frame that fits the window, centred.
-fn game_rect(canvas: &WindowCanvas, settings: &Settings) -> Result<Rect, String> {
-    let (width, height) = canvas.output_size()?;
-    Ok(presentation_rect(width, height, settings))
-}
-
-fn art_output_scale(rect: Rect, width: usize) -> usize {
-    (rect.width() as usize)
-        .div_ceil(width)
-        .max((rect.height() as usize).div_ceil(HEIGHT))
-        .max(1)
-}
-
-fn fit_art_to_window(
-    frame: &mut Frame,
-    canvas: &WindowCanvas,
-    settings: &Settings,
-) -> Result<bool, String> {
-    Ok(frame.set_output_scale(art_output_scale(
-        game_rect(canvas, settings)?,
-        frame.width(),
-    )))
-}
-
-fn presentation_rect(width: u32, height: u32, settings: &Settings) -> Rect {
-    if !settings.widescreen && settings.aspect == 2 {
-        return Rect::new(0, 0, width.max(1), height.max(1));
-    }
-    let base_width = if settings.widescreen {
-        settings.frame_width() as f64
-    } else if settings.aspect == 1 {
-        HEIGHT as f64 * 4.0 / 3.0
-    } else {
-        WIDTH as f64
-    };
-    let mut scale = (width as f64 / base_width).min(height as f64 / HEIGHT as f64);
-    if settings.integer_scale && scale >= 1.0 {
-        scale = scale.floor();
-    }
-    let (w, h) = (
-        (base_width * scale).round().max(1.0) as u32,
-        (HEIGHT as f64 * scale).round().max(1.0) as u32,
-    );
-    Rect::new(
-        (width as i32 - w as i32) / 2,
-        (height as i32 - h as i32) / 2,
-        w,
-        h,
-    )
-}
-
 /// Clock-paced fallback runs the tick early and presents on its deadline.
 const PRESENT_LEAD: Duration = Duration::from_millis(5);
-
-struct PullAudio(AudioConsumer);
-
-impl AudioCallback for PullAudio {
-    type Channel = f32;
-
-    fn callback(&mut self, output: &mut [f32]) {
-        self.0.render(output);
-    }
-}
-
-struct AudioOutput {
-    // Keep the device alive while the producer feeds its callback.
-    device: AudioDevice<PullAudio>,
-    producer: AudioProducer,
-    demo_remaining: usize,
-}
-
-impl AudioOutput {
-    fn push_tick(&mut self, samples: &[i16], rendered: bool, gain: f32, floats: &mut Vec<f32>) {
-        floats.clear();
-        for frame in samples.as_chunks::<2>().0 {
-            let tone = if self.demo_remaining > 0 {
-                let elapsed = 2400 - self.demo_remaining;
-                let phase = elapsed as f32 * 660.0 * std::f32::consts::TAU / 48_000.0;
-                let tone = phase.sin() * self.demo_remaining as f32 / 2400.0 * 0.08;
-                self.demo_remaining -= 1;
-                tone
-            } else {
-                0.0
-            };
-            floats.extend(frame.iter().map(|sample| {
-                let value = if rendered {
-                    f32::from(*sample) / 32768.0
-                } else {
-                    0.0
-                };
-                (value + tone) * gain
-            }));
-        }
-        self.producer.push(floats);
-    }
-}
-
-fn open_audio(sdl: &sdl2::Sdl) -> Result<AudioOutput, String> {
-    let audio = sdl.audio()?;
-    let mut producer = None;
-    let device = audio.open_playback(
-        None,
-        &AudioSpecDesired {
-            freq: Some(48_000),
-            channels: Some(2),
-            samples: Some(512),
-        },
-        |spec| {
-            let (writer, reader) = audio_ring(spec.freq as u32);
-            producer = Some(writer);
-            PullAudio(reader)
-        },
-    )?;
-    if device.spec().channels != 2 {
-        return Err("audio device must support stereo output".to_string());
-    }
-    device.resume();
-    Ok(AudioOutput {
-        device,
-        producer: producer.expect("SDL initialized the audio callback"),
-        demo_remaining: 0,
-    })
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pacing {
@@ -525,6 +283,7 @@ pub(super) fn run(
     let mut samples = [0i16; crate::TICK_SAMPLES];
     let mut floats = Vec::with_capacity(crate::TICK_SAMPLES);
     let mut inactive_pixels = Vec::with_capacity(frame.width() * HEIGHT * 3);
+    let mut presentation_pixels = Vec::new();
     // The frame changes only when the scene ticks; the window is repainted
     // then, or when the window system asks for it.
     scene.draw(frame);
@@ -829,7 +588,10 @@ pub(super) fn run(
         if let Some(title) = title
             && title != shown_title
         {
-            set_title(&mut canvas, &title)?;
+            canvas
+                .window_mut()
+                .set_title(&title)
+                .map_err(|error| error.to_string())?;
             shown_title = title;
         }
 
@@ -932,7 +694,6 @@ pub(super) fn run(
                 gray_out(frame.presentation_rgb(), &mut inactive_pixels);
                 &inactive_pixels
             };
-            let mut presentation_pixels = Vec::new();
             let crt_enabled = settings.crt && crt.is_ok();
             let pixels = if settings.scanlines == 0 || crt_enabled {
                 pixels
@@ -1219,149 +980,4 @@ pub(super) fn run(
         }
     }
     Ok(total_ticks)
-}
-
-fn set_icon(window: &mut sdl2::video::Window) -> Result<(), String> {
-    let mut data = sdl2::rwops::RWops::from_bytes(include_bytes!("../resources/ninja-master.bmp"))?;
-    let mut icon = sdl2::surface::Surface::load_bmp_rw(&mut data)?;
-    icon.set_color_key(true, sdl2::pixels::Color::BLACK)?;
-    window.set_icon(icon);
-    Ok(())
-}
-
-/// Desaturate and dim the presentation copy; the paused game frame keeps its colour.
-fn scanlines(pixels: &[u8], width: usize, scale: usize, strength: u8, output: &mut Vec<u8>) {
-    output.clear();
-    let gain = 100 - u16::from(strength.min(100));
-    for (row, line) in pixels.chunks(width * 3).enumerate() {
-        if (row / scale).is_multiple_of(2) {
-            output.extend_from_slice(line);
-        } else {
-            output.extend(
-                line.iter()
-                    .map(|&channel| (u16::from(channel) * gain / 100) as u8),
-            );
-        }
-    }
-}
-
-fn track_name(rom: &[u8], command: Option<u8>) -> String {
-    let Some(command) = command else {
-        return "None".into();
-    };
-    for index in 0..29 {
-        let at = ninja_master_native::sound_events::MUSIC_TABLE + index * 16;
-        if rom.get(at) == Some(&command)
-            && let Some(name) = rom.get(at + 2..at + 16)
-        {
-            return format!("{} (${command:02X})", String::from_utf8_lossy(name).trim());
-        }
-    }
-    format!("${command:02X}")
-}
-
-fn gray_out(pixels: &[u8], output: &mut Vec<u8>) {
-    output.clear();
-    for pixel in pixels.as_chunks::<3>().0 {
-        let luminance =
-            (u32::from(pixel[0]) * 77 + u32::from(pixel[1]) * 150 + u32::from(pixel[2]) * 29) >> 8;
-        output.extend_from_slice(&[(luminance * 3 / 5) as u8; 3]);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hd_scale_tracks_actual_viewport_including_4k_and_stretched_windows() {
-        assert_eq!(art_output_scale(Rect::new(0, 0, 1194, 672), 398), 3);
-        assert_eq!(art_output_scale(Rect::new(0, 0, 3840, 2160), 398), 10);
-        assert_eq!(art_output_scale(Rect::new(0, 0, 160, 112), 320), 1);
-        assert_eq!(art_output_scale(Rect::new(0, 0, 1920, 448), 320), 6);
-    }
-
-    #[test]
-    fn presentation_fits_small_windows_and_respects_aspect_modes() {
-        let mut settings = Settings {
-            widescreen: false,
-            ..Settings::default()
-        };
-        assert_eq!(
-            presentation_rect(960, 672, &settings),
-            Rect::new(0, 0, 960, 672)
-        );
-        assert_eq!(
-            presentation_rect(160, 112, &settings),
-            Rect::new(0, 0, 160, 112)
-        );
-        assert_eq!(
-            presentation_rect(1000, 700, &settings),
-            Rect::new(20, 14, 960, 672)
-        );
-        settings.integer_scale = false;
-        assert_eq!(
-            presentation_rect(1000, 700, &settings),
-            Rect::new(0, 0, 1000, 700)
-        );
-        settings.aspect = 1;
-        let rect = presentation_rect(960, 672, &settings);
-        assert_eq!(rect, Rect::new(32, 0, 896, 672));
-        settings.aspect = 2;
-        assert_eq!(
-            presentation_rect(900, 500, &settings),
-            Rect::new(0, 0, 900, 500)
-        );
-    }
-
-    #[test]
-    fn scanlines_change_only_alternating_presentation_rows() {
-        for width in [WIDTH, ninja_master_native::WIDE_WIDTH] {
-            let pixels = vec![200; width * HEIGHT * 3];
-            let mut output = Vec::new();
-            scanlines(&pixels, width, 1, 50, &mut output);
-            assert!(output[..width * 3].iter().all(|&v| v == 200));
-            assert!(output[width * 3..width * 6].iter().all(|&v| v == 100));
-            assert!(pixels.iter().all(|&v| v == 200));
-            scanlines(&pixels, width, 1, 0, &mut output);
-            assert_eq!(pixels, output);
-            scanlines(&pixels, width, 2, 50, &mut output);
-            assert!(output[..width * 6].iter().all(|&v| v == 200));
-            assert!(output[width * 6..width * 12].iter().all(|&v| v == 100));
-        }
-    }
-
-    #[test]
-    fn widescreen_preserves_pixels_even_with_a_saved_legacy_aspect() {
-        let mut settings = Settings::default();
-        for aspect in 0..=2 {
-            settings.aspect = aspect;
-            assert_eq!(
-                presentation_rect(1194, 672, &settings),
-                Rect::new(0, 0, 1194, 672)
-            );
-            assert_eq!(
-                presentation_rect(199, 112, &settings),
-                Rect::new(0, 0, 199, 112)
-            );
-            assert_eq!(
-                presentation_rect(1920, 1080, &settings),
-                Rect::new(164, 92, 1592, 896)
-            );
-        }
-        settings.integer_scale = false;
-        assert_eq!(
-            presentation_rect(1920, 1080, &settings),
-            Rect::new(0, 0, 1919, 1080)
-        );
-    }
-
-    #[test]
-    fn unfocused_display_is_gray_and_dim_without_changing_the_game_frame() {
-        let pixels = [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
-        let mut output = vec![255; 24];
-        gray_out(&pixels, &mut output);
-        assert_eq!(output, [45, 45, 45, 89, 89, 89, 16, 16, 16, 153, 153, 153]);
-        assert_eq!(&pixels[..3], &[255, 0, 0]);
-    }
 }
