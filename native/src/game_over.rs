@@ -119,6 +119,7 @@ pub struct GameOver {
     pub cursor: u8,
     audio: Audio,
     texts: Option<Texts>,
+    pointer_input: Input,
 }
 impl GameOver {
     /// `ModeChange::Suspend` constructor for `$B1BC`.
@@ -140,6 +141,7 @@ impl GameOver {
             cursor: 0,
             audio: Audio::default(),
             texts,
+            pointer_input: Input::default(),
         }
     }
     fn music(&mut self, index: u8) {
@@ -242,7 +244,8 @@ impl GameOver {
     }
 }
 impl Mode for GameOver {
-    fn tick(&mut self, input: Input) -> Option<ModeChange> {
+    fn tick(&mut self, mut input: Input) -> Option<ModeChange> {
+        input.pressed |= std::mem::take(&mut self.pointer_input).pressed;
         self.fade = self.fade.advance();
         let any = input.held != 0 || input.pressed != 0;
         match self.step {
@@ -348,6 +351,33 @@ impl Mode for GameOver {
             self.draw_menu(frame, game, texts);
         }
         frame.fade(self.fade);
+    }
+    fn menu_event(&mut self, event: crate::menu::MenuEvent) {
+        use crate::menu::MenuEvent;
+        if !matches!(self.step, Step::Menu(_) | Step::Countdown(_)) {
+            return;
+        }
+        if matches!(event, MenuEvent::Back) {
+            self.cursor = 1;
+            self.pointer_input.pressed |= Button::Start.mask();
+            return;
+        }
+        if let MenuEvent::Hover(x, y) | MenuEvent::Click(x, y, _) = event
+            && let Some(texts) = &self.texts
+        {
+            let (col, row) = texts.record.cell(PLANE_A);
+            if (col * 8..(col + texts.record.width as i32) * 8).contains(&x) {
+                for item in 0..2 {
+                    let top = (row + 1 + item * 2) * 8;
+                    if (top..top + 8).contains(&y) {
+                        self.cursor = item as u8;
+                        if matches!(event, MenuEvent::Click(..)) {
+                            self.pointer_input.pressed |= Button::Start.mask();
+                        }
+                    }
+                }
+            }
+        }
     }
     fn name(&self) -> &'static str {
         "GameOver"

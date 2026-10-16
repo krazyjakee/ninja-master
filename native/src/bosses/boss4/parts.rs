@@ -23,7 +23,7 @@ use crate::{
         Effect, EffectKind, Enemy, Hitbox, Motion, PartTarget, PlaneOp, WeaponContact, ambient,
     },
     enemies::Ctx,
-    rom::{Result, pointer, signed, word},
+    rom::{Result, signed, word},
 };
 
 /// `+$28` roles (`$2FCFE`).
@@ -199,7 +199,7 @@ fn imm(rom: &[u8], at: usize) -> Result<i32> {
 }
 /// The long operand's whole pixels (`move.l #$FFE40000,d0`).
 fn long_px(rom: &[u8], at: usize) -> Result<i32> {
-    Ok(pointer(rom, at + 2)? as u32 as i32 >> 16)
+    Ok(crate::rom::raw_pointer(rom, at + 2)? as u32 as i32 >> 16)
 }
 /// `addq`/`subq` data (bits 9..11, 0 = 8).
 fn quick(rom: &[u8], at: usize) -> Result<i32> {
@@ -267,12 +267,15 @@ impl Parts {
             splash_rows: (imm(rom, 0x3023e)?, imm(rom, 0x30246)?),
             splash_y: imm(rom, 0x30270)?,
             splash_life: imm(rom, 0x30276)?,
-            fall: (pointer(rom, 0x2fe8e)? as u32 as i32, imm(rom, 0x2fe94)?),
+            fall: (
+                crate::rom::raw_pointer(rom, 0x2fe8e)? as u32 as i32,
+                imm(rom, 0x2fe94)?,
+            ),
             water: imm(rom, 0x2feac)?,
             wreck: Wreck {
                 mapping: word(rom, 0x2ff3e)?,
                 life: imm(rom, 0x2ff8c)?,
-                gravity: pointer(rom, 0x2ff86)? as u32 as i32,
+                gravity: crate::rom::raw_pointer(rom, 0x2ff86)? as u32 as i32,
                 speed: (quick(rom, 0x2ff5e)?, quick(rom, 0x2ff7c)?),
                 item: (
                     moveq(rom, 0x2f406)? as u8,

@@ -315,7 +315,7 @@ impl Sinking {
             rise: signed(rom, 0x2f3ea)?,
             lift: i32::from(byte(rom, 0x2f3f5)?),
             debris: (word(rom, 0x2f1aa)?, word(rom, 0x2f1ba)?),
-            gravity: pointer(rom, 0x2f1dc)? as i32,
+            gravity: crate::rom::raw_pointer(rom, 0x2f1dc)? as i32,
             life: signed(rom, 0x2f1e4)?,
             plume_smoke: signed(rom, 0x2e370)?,
         })

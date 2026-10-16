@@ -82,12 +82,12 @@ pub(crate) fn pick_rom(initial: &Path, warning: &str) -> Result<Option<Vec<u8>>,
         let mut cancel = false;
         let (width, height) = canvas.window().size();
         gui.draw(&mut canvas, |ui| {
-            ui.window("Locate your Shinobi III US ROM")
+            ui.window("Locate your Shinobi III ROM")
                 .position([0.0, 0.0], Condition::Always)
                 .size([width as f32, height as f32], Condition::Always)
                 .title_bar(false).resizable(false).movable(false).build(|| {
                     ui.text("A user-supplied ROM is required");
-                    ui.text_wrapped("This release contains no game data. Select your own plain US cartridge dump (.bin, 1 MiB). No download is provided.");
+                    ui.text_wrapped("This release contains no game data. Select your own plain US, EU or JP retail cartridge dump (.bin, 1 MiB). No download is provided.");
                     let warning_color = ui.push_style_color(imgui::StyleColor::Text, [1.0, 0.55, 0.48, 1.0]);
                     ui.text_wrapped(&message);
                     drop(warning_color);
@@ -189,7 +189,7 @@ mod tests {
         assert!(
             pick_rom(
                 Path::new("missing.bin"),
-                "ROM not found. Choose your US cartridge dump."
+                "ROM not found. Choose your US, EU or JP cartridge dump."
             )
             .unwrap()
             .is_none()

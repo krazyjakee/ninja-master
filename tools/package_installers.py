@@ -105,7 +105,7 @@ def deb(stage, manifest, output, workspace):
     metadata = root / "debian"
     metadata.mkdir()
     maintainer = "Jake Cattrall <krazyjakee@gmail.com>"
-    (metadata / "control").write_text(f"Source: ninja-master\nSection: games\nPriority: optional\nMaintainer: {maintainer}\n\nPackage: ninja-master\nArchitecture: any\nDescription: Native Shinobi III port requiring a user-supplied US ROM\n")
+    (metadata / "control").write_text(f"Source: ninja-master\nSection: games\nPriority: optional\nMaintainer: {maintainer}\n\nPackage: ninja-master\nArchitecture: any\nDescription: Native Shinobi III port requiring a user-supplied US, EU or JP ROM\n")
     dependencies = subprocess.check_output(["dpkg-shlibdeps", "-O", str(payload / "ninja-master-native")], cwd=root, text=True)
     dependencies = next(line.split("=", 1)[1] for line in dependencies.splitlines() if line.startswith("shlibs:Depends="))
     if "libsdl2-2.0-0" not in dependencies:
@@ -115,7 +115,7 @@ def deb(stage, manifest, output, workspace):
     control.mkdir()
     version = manifest["version"].replace("-", "~", 1)
     size = sum(p.stat().st_size for p in root.rglob("*") if p.is_file()) // 1024 + 1
-    (control / "control").write_text(f"Package: ninja-master\nVersion: {version}\nArchitecture: amd64\nMaintainer: {maintainer}\nSection: games\nPriority: optional\nInstalled-Size: {size}\nDepends: {dependencies}\nHomepage: https://github.com/krazyjakee/ninja-master\nDescription: Native Shinobi III desktop port\n Requires a user-supplied compatible US cartridge dump.\n No original game assets are included.\n")
+    (control / "control").write_text(f"Package: ninja-master\nVersion: {version}\nArchitecture: amd64\nMaintainer: {maintainer}\nSection: games\nPriority: optional\nInstalled-Size: {size}\nDepends: {dependencies}\nHomepage: https://github.com/krazyjakee/ninja-master\nDescription: Native Shinobi III desktop port\n Requires a user-supplied compatible US, EU or JP cartridge dump.\n No original game assets are included.\n")
     files = []
     for path in sorted(root.rglob("*")):
         if path.is_file() and "DEBIAN" not in path.relative_to(root).parts:
@@ -146,7 +146,7 @@ URL: https://github.com/krazyjakee/ninja-master
 BuildArch: x86_64
 
 %description
-Native desktop gameplay using a user-supplied compatible US cartridge dump.
+Native desktop gameplay using a user-supplied compatible US, EU or JP cartridge dump.
 No original game assets are included.
 
 %prep

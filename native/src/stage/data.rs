@@ -338,7 +338,7 @@ impl StageData {
             let remap = record[0] != 0;
             let mut group = pointer(
                 rom,
-                groups + pointer(rom, indices + usize::from(record[3]))?,
+                groups + crate::rom::raw_pointer(rom, indices + usize::from(record[3]))?,
             )?;
             loop {
                 let dest = word(rom, group)?;
@@ -527,7 +527,7 @@ impl StageData {
     pub fn report(&self) -> String {
         let s = &self.section;
         let mut out = format!(
-            "US ROM CRC32 5381506f - round {}\nPart record ${:06x}: {:04x?}\n",
+            "Native ROM view - round {}\nPart record ${:06x}: {:04x?}\n",
             self.id, s.record, s.raw
         );
         out += &format!(

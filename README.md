@@ -21,10 +21,10 @@ start to finish. Full playthroughs have been tested on **Linux and Windows**.
 ## Getting started
 
 1. Download a package for your platform from [Releases](https://github.com/krazyjakee/ninja-master/releases).
-2. Have your own [compatible US ROM](#compatible-rom) ready. No ROM or original game assets are included.
+2. Have your own [compatible ROM](#compatible-rom) ready. No ROM or original game assets are included.
 3. Install or extract it as described below, then launch **Ninja Master**.
 4. Choose your ROM in the startup file picker. The game remembers its location for next time.
-5. Press **Enter**, select **GAME**, and press **Enter** again.
+5. Press **Enter**, select **NEW GAME**, and press **Enter** again.
 
 You can also name your dump `shinobi3_us.bin` and put it beside the executable
 (beside the `.app` on macOS). For a different location, pass `--rom`:
@@ -59,26 +59,25 @@ settings and saves. Each download has a `.sha256` file for verifying its checksu
 
 ## Compatible ROM
 
-**Only the original 1993 USA / NTSC-U release of _Shinobi III: Return of the
-Ninja Master_ for Sega Genesis is supported.** The exact compatible image is
-identified below; its filename alone does not establish compatibility.
+The following original 1993 retail cartridge dumps are supported. Each must be
+**1,048,576 bytes** (1 MiB), in plain big-endian binary `.bin` format without
+a copier header or SMD interleaving. Filenames do not establish compatibility.
 
-| Property | Required value |
-| --- | --- |
-| Game / version | Shinobi III: Return of the Ninja Master — USA, 1993 retail release |
-| Cartridge ROM | `MPR-15674-F` (MAME entry `shinobi3u`) |
-| Format | Plain, big-endian binary `.bin`; no copier header or SMD interleaving |
-| Size | **1,048,576 bytes** (1 MiB) |
-| CRC32 | `5381506f` |
-| SHA-1 | `1e07d7998e3048fcfba4238ae96496460e91b3a5` |
+| Region / version | CRC32 | SHA-1 |
+| --- | --- | --- |
+| USA — Shinobi III, `MPR-15674-F` | `5381506f` | `1e07d7998e3048fcfba4238ae96496460e91b3a5` |
+| Europe — Shinobi III, `MPR-15798 T57` | `0b6d3eb5` | `23579c8f7e2396080b478b113aff36d2382395a3` |
+| Japan / Korea — The Super Shinobi II | `5b412816` | `e3dbe326aa93320d405c561c306fc3954ab8ea7c` |
 
-The ROM identity matches [MAME's Mega Drive cartridge catalog](https://github.com/mamedev/mame/blob/master/hash/megadriv.xml).
-European/PAL, Japanese (*The Super Shinobi II*), modified, zipped and interleaved
-images are not accepted. Supply a dump of your own compatible cartridge.
+These identities match [MAME's Mega Drive cartridge catalog](https://github.com/mamedev/mame/blob/master/hash/megadriv.xml).
+Startup reports the detected release and rejects modified, prototype, zipped
+and interleaved images. Supply a dump of your own compatible cartridge.
+The Japanese version uses its own relocated data and Japanese story/ending font and text.
+All regions run at the native port's **60 Hz** simulation/audio cadence; the
+European ROM does not switch the application to PAL 50 Hz.
 
 To check SHA-1, use `sha1sum game.bin` on Linux, `shasum -a 1 game.bin` on macOS,
-or `Get-FileHash -Algorithm SHA1 game.bin` in Windows PowerShell. The result must
-match the table above. Startup also checks the image size, header and CRC32.
+or `Get-FileHash -Algorithm SHA1 game.bin` in Windows PowerShell.
 
 ## How to play
 
@@ -100,8 +99,44 @@ Default controls follow the Mega Drive three-button layout:
 - **Quit during play:** pause, then press Attack followed by Jump.
 
 The title's **OPTIONS** menu adjusts difficulty, starting shurikens and control
-type. Six-button mode adds guarding, separate melee/shuriken inputs and technique
-cycling; all bindings can be changed in **F1 → Controls**.
+scheme. These choices and your bindings persist across application restarts.
+Choose a classic layout, **6 BUTTON**, or **DEDICATED**. All keyboard and
+controller bindings can be changed or restored in **F1 → Controls**, where the
+scheme selector and action names explain each input.
+
+| Pad input | Six-button action | Dedicated action | Default keyboard | Default controller |
+| --- | --- | --- | --- | --- |
+| A | Guard | Ninjutsu | A / Z | West face |
+| B | Melee | Melee | S / X | South face |
+| C | Jump | Jump | D / C / Space | East face |
+| X | Shuriken | Shuriken | Q | Left shoulder |
+| Y | Shuriken | Guard | W | Right shoulder |
+| Z | Ninjutsu | Ninjutsu | E | North face |
+| Mode | Cycle technique | Cycle technique | Tab | Back / View |
+| Start | Pause / confirm | Pause / confirm | Enter | Start |
+
+Guard works immediately, without throwing first. Melee remains available with
+no ammunition; an empty dedicated shuriken action does nothing. Classic attack
+retains the original proximity-based choice.
+
+Menus support keyboard, controller and mouse together. Hover selects a row;
+click activates it. In options, click the left or right side of a setting to
+change it; click a sound-test label to play it and right-click to stop it.
+Use the wheel or directions to scroll. Arrows indicate more rows above or below;
+keyboard/controller selection stays visible and returning from Options preserves
+main-menu focus. **Escape** or controller **Back / View** goes back, cancels a confirmation or resumes pause.
+**Start** skips the SEGA logo at any point without activating the next screen.
+
+**NEW GAME** starts a fresh run with your chosen options and asks before replacing
+an existing saved run. **CONTINUE** resumes the latest automatic checkpoint,
+including position, health, ammunition, lives, score, technique and run options.
+Checkpoints are saved every five seconds of simulation, at mode transitions,
+and on normal application exit, in `continue.nms` beside your settings.
+Continue restores gameplay directly, including when the checkpoint was taken
+while paused or showing a round card. Completed or exhausted runs clear it.
+Continue is hidden when there is no compatible checkpoint; damaged or
+incompatible files produce a message without starting a game. It is separate
+from the original game-over continues and the eight manual save slots.
 
 ## Make it yours
 

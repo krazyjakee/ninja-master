@@ -137,7 +137,7 @@ impl Font {
         // The frame tiles $57..$59 are 4bpp HUD art in colours 9 and 11.
         let hud_first = usize::from(word(rom, HUD_ART)?);
         let hud_count = usize::from(word(rom, HUD_ART + 2)?) + 1;
-        let (hud, _) = musashi(rom, HUD_ART + 4, 65536)?;
+        let (hud, _) = musashi(rom, crate::rom::regions::source(rom, HUD_ART) + 4, 65536)?;
         let hud = hud.get(..hud_count * 32).ok_or("HUD art truncated")?;
         for (glyph, tile) in glyphs[0x57..=0x59].iter_mut().zip(0x57..) {
             let data = hud

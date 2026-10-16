@@ -76,7 +76,12 @@ def prepare(stage, root, platform, version, arch):
         "architecture": arch,
         "executable": executable,
         "rom": {"included": False, "region": "US", "size": 1048576,
-                "crc32": "5381506f", "sha1": "1e07d7998e3048fcfba4238ae96496460e91b3a5"},
+                "crc32": "5381506f", "sha1": "1e07d7998e3048fcfba4238ae96496460e91b3a5",
+                "supported": [
+                    {"region": "US", "crc32": "5381506f", "sha1": "1e07d7998e3048fcfba4238ae96496460e91b3a5"},
+                    {"region": "EU", "crc32": "0b6d3eb5", "sha1": "23579c8f7e2396080b478b113aff36d2382395a3"},
+                    {"region": "JP", "crc32": "5b412816", "sha1": "e3dbe326aa93320d405c561c306fc3954ab8ea7c"},
+                ]},
         "files": {path.relative_to(stage).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                   for path in sorted(stage.rglob("*")) if path.is_file()},
     }

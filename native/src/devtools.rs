@@ -130,34 +130,16 @@ impl DevTools {
     }
 
     pub fn save(&mut self, modes: &Modes, tick: u64) {
-        let Some(game) = modes.game() else {
+        let name = self.slots[self.slot].as_ref().map_or_else(
+            || format!("Slot {}", self.slot + 1),
+            |state| state.name.clone(),
+        );
+        let Some(state) = SaveState::capture(modes, tick, name) else {
             self.status = "save: no game running".into();
             return;
         };
-        let mut frame = crate::render::Frame::default();
-        game.draw(&mut frame);
-        let pixels = frame.rgb();
-        let thumbnail = (0..THUMB_HEIGHT)
-            .flat_map(|y| {
-                (0..THUMB_WIDTH).flat_map(move |x| {
-                    let at = ((y * 2) * crate::WIDTH + x * 2) * 3;
-                    pixels[at..at + 3].iter().copied()
-                })
-            })
-            .collect();
-        let name = self.slots[self.slot]
-            .as_ref()
-            .map_or_else(|| format!("Slot {}", self.slot + 1), |s| s.name.clone());
-        self.slots[self.slot] = Some(SaveState {
-            game: Some(Box::new(game.clone())),
-            stage: game.stage_id,
-            history: modes.history.clone(),
-            checksum: crate::assets::crc32(pixels),
-            name,
-            thumbnail,
-            tick,
-        });
-        self.status = format!("saved slot {} ({})", self.slot + 1, game.stage_id);
+        self.status = format!("saved slot {} ({})", self.slot + 1, state.stage);
+        self.slots[self.slot] = Some(state);
         self.persist();
     }
 
@@ -296,16 +278,21 @@ impl DevTools {
             effects,
             events: Vec::new(),
         });
+        if let Some(game) = modes.game() {
+            modes.record(Event::Options(game.options));
+        }
         self.save_dir = dir;
         if let Some(dir) = &self.save_dir {
             let mut errors = Vec::new();
             for slot in 0..SLOTS {
                 let path = dir.join(format!("slot-{}.nms", slot + 1));
                 match std::fs::read(&path) {
-                    Ok(bytes) => match SaveState::decode(&bytes, crate::assets::crc32(&self.rom)) {
-                        Ok(state) => self.slots[slot] = Some(state),
-                        Err(error) => errors.push(format!("slot {}: {error}", slot + 1)),
-                    },
+                    Ok(bytes) => {
+                        match SaveState::decode(&bytes, crate::rom::regions::checksum(&self.rom)) {
+                            Ok(state) => self.slots[slot] = Some(state),
+                            Err(error) => errors.push(format!("slot {}: {error}", slot + 1)),
+                        }
+                    }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => errors.push(format!("slot {}: {error}", slot + 1)),
                 }
@@ -329,7 +316,7 @@ impl DevTools {
         let (Some(dir), Some(state)) = (&self.save_dir, &self.slots[self.slot]) else {
             return;
         };
-        let result = state.write(dir, self.slot, crate::assets::crc32(&self.rom));
+        let result = state.write(dir, self.slot, crate::rom::regions::checksum(&self.rom));
         if let Err(error) = result {
             self.status = format!("saved in memory; disk write failed: {error}");
         }
@@ -337,7 +324,40 @@ impl DevTools {
 }
 
 impl SaveState {
+    pub(crate) fn capture(modes: &Modes, tick: u64, name: String) -> Option<Self> {
+        let game = modes.game()?;
+        let mut frame = crate::render::Frame::default();
+        game.draw(&mut frame);
+        let pixels = frame.rgb();
+        let thumbnail = (0..THUMB_HEIGHT)
+            .flat_map(|y| {
+                (0..THUMB_WIDTH).flat_map(move |x| {
+                    let at = ((y * 2) * crate::WIDTH + x * 2) * 3;
+                    pixels[at..at + 3].iter().copied()
+                })
+            })
+            .collect();
+        Some(Self {
+            game: Some(Box::new(game.clone())),
+            stage: game.stage_id,
+            history: modes.history.clone(),
+            checksum: crate::assets::crc32(pixels),
+            name,
+            thumbnail,
+            tick,
+        })
+    }
+    pub(crate) fn restore(&self, rom: &[u8]) -> Result<(Box<Game>, History), String> {
+        let history = self.history.as_ref().ok_or("no replay history")?;
+        if let Some(game) = &self.game {
+            return Ok((game.clone(), history.clone()));
+        }
+        history.restore_checked(rom, self.stage, self.checksum)
+    }
     fn write(&self, dir: &Path, slot: usize, rom_crc: u32) -> Result<(), String> {
+        self.write_path(&dir.join(format!("slot-{}.nms", slot + 1)), rom_crc)
+    }
+    pub(crate) fn write_path(&self, path: &Path, rom_crc: u32) -> Result<(), String> {
         let history = self.history.as_ref().ok_or("no replay history")?;
         let mut out = b"NMSAVE02".to_vec();
         out.extend(rom_crc.to_le_bytes());
@@ -350,13 +370,14 @@ impl SaveState {
         history.encode(&mut out);
         let crc = crate::assets::crc32(&out);
         out.extend(crc.to_le_bytes());
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        let path = dir.join(format!("slot-{}.nms", slot + 1));
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
         let temporary = path.with_extension("tmp");
         std::fs::write(&temporary, out).map_err(|e| e.to_string())?;
         std::fs::rename(temporary, path).map_err(|e| e.to_string())
     }
-    fn decode(bytes: &[u8], rom_crc: u32) -> Result<Self, String> {
+    pub(crate) fn decode(bytes: &[u8], rom_crc: u32) -> Result<Self, String> {
         if bytes.len() < 12 || bytes.len() > 16_000_000 {
             return Err("invalid save size".into());
         }

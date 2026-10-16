@@ -72,10 +72,9 @@ const SLIDE_DRAW_HOLD: u32 = 2;
 pub const ZOOM_TICKS: u32 = 216;
 /// The Slide logo: frames 18..271.
 pub const SLIDE_TICKS: u32 = 254;
-/// The first tick whose Start is honoured (`Mode_Routine` = `$10`,
-/// `Func_006B6C`): frame 156 (Zoom) or 194 (Slide).
-pub const ZOOM_START_TICK: u32 = 139;
-pub const SLIDE_START_TICK: u32 = 177;
+/// Native Start skipping is available from the first tick of either variant.
+pub const ZOOM_START_TICK: u32 = 1;
+pub const SLIDE_START_TICK: u32 = 1;
 
 /// `$FF00FA`: the animation `SegaLogo_S04` runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -226,6 +225,10 @@ impl Logo {
     /// One frame: the interrupt, then the handler call unless a long call
     /// is still running; the handler the logo leaves to when it ends.
     pub fn tick(&mut self, start: bool) -> Option<Exit> {
+        if start {
+            self.hold = 0;
+            self.routine = 0x14;
+        }
         if self.hold > 0 {
             if self.lost == Some(self.hold) {
                 self.lost = None;

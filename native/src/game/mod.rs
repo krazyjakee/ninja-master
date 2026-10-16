@@ -577,10 +577,11 @@ impl Game {
     /// reload (`Player_PowerDown`) makes the frames after it lag too.
     pub fn tick(&mut self, input: Input) -> bool {
         let advancing = self.lag == 0 && self.cast.is_none();
-        self.combat.weapons.force_throw = (self.options.control == 4)
-            .then_some(input.pressed(Button::X) || input.pressed(Button::Y));
+        self.combat.weapons.force_throw = (self.options.control >= 4).then_some(
+            input.pressed(Button::X) || (self.options.control == 4 && input.pressed(Button::Y)),
+        );
         if advancing
-            && self.options.control == 4
+            && self.options.control >= 4
             && self.death.is_none()
             && !self.player.silence_sounds
             && self.door.is_none()

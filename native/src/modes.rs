@@ -72,6 +72,8 @@ pub enum ModeChange {
     Suspend(fn(Box<dyn Mode>) -> Box<dyn Mode>),
     /// Leave the program: the title menu's native QUIT item.
     Quit,
+    NewGame(crate::front_end::Front),
+    Continue(crate::front_end::Front),
 }
 
 /// One `$FF002A` handler.
@@ -79,6 +81,19 @@ pub trait Mode {
     fn tick(&mut self, input: Input) -> Option<ModeChange>;
     fn draw(&self, frame: &mut Frame);
     fn name(&self) -> &'static str;
+    fn menu_event(&mut self, _: crate::menu::MenuEvent) {}
+    fn menu_context(&mut self, _: bool, _: &str) {}
+    fn checkpoint_requested(&self) -> bool {
+        false
+    }
+    fn options(&self) -> Option<crate::options::GameOptions> {
+        self.game().map(|game| game.options)
+    }
+    fn set_options(&mut self, options: crate::options::GameOptions) {
+        if let Some(game) = self.game_mut() {
+            game.options = options;
+        }
+    }
     /// Sound requests since the last call, including a suspended mode's.
     fn take_audio(&mut self) -> Audio {
         Audio::default()
@@ -123,6 +138,7 @@ pub struct Modes {
     /// Requests of modes that were replaced before the caller took them.
     audio: Audio,
     quit: bool,
+    progress: crate::progress::Progress,
     pub(crate) history: Option<crate::devtools::replay::History>,
 }
 impl Modes {
@@ -131,26 +147,135 @@ impl Modes {
             current: mode,
             audio: Audio::default(),
             quit: false,
+            progress: crate::progress::Progress::default(),
             history: None,
         }
     }
     /// One main-loop frame (`$508`: `JSR (A6)` with A6 = `Main_Handler`).
-    pub fn tick(&mut self, input: Input) {
+    pub fn tick(&mut self, mut input: Input) {
         if self.quit {
             return;
         }
         self.record(crate::devtools::replay::Event::Tick(input));
-        match self.current.tick(input) {
+        if input.pressed(Button::Mode)
+            && matches!(
+                self.current.name(),
+                "Title" | "Options" | "Pause" | "GameOver"
+            )
+        {
+            self.current.menu_event(crate::menu::MenuEvent::Back);
+            input.pressed &= !Button::Mode.mask();
+            input.held &= !Button::Mode.mask();
+        }
+        self.current
+            .menu_context(self.progress.available(), &self.progress.status);
+        let change = self.current.tick(input);
+        // Save after installing modes that still own gameplay. A transition
+        // to the title has already consumed the game in a replay, so its
+        // final tick cannot be used as a resumable history.
+        let checkpoint = match &change {
+            Some(ModeChange::Replace(mode)) => mode.game().is_some(),
+            Some(ModeChange::Suspend(_)) => true,
+            None => self.current.checkpoint_requested(),
+            _ => false,
+        };
+        match change {
             None => {}
             Some(ModeChange::Replace(mode)) => {
                 let mut old = std::mem::replace(&mut self.current, mode);
                 self.audio.extend(old.take_audio());
+                if self.current.name() == "Ending"
+                    && let Err(error) = self.progress.clear()
+                {
+                    self.progress.status = error;
+                }
             }
             Some(ModeChange::Suspend(build)) => {
                 let suspended = std::mem::replace(&mut self.current, Box::new(Idle));
                 self.current = build(suspended);
             }
             Some(ModeChange::Quit) => self.quit = true,
+            Some(ModeChange::NewGame(front)) => match front.new_game() {
+                Ok(game) => {
+                    if let Err(error) = self.progress.clear() {
+                        self.progress.status = format!("Cannot replace saved run: {error}");
+                        self.replace(Box::new(crate::front_end::Title::menu(front)));
+                        return;
+                    }
+                    let mut history = crate::devtools::replay::History {
+                        boot: false,
+                        stage: game.stage_id,
+                        effects: front.effects,
+                        events: Vec::new(),
+                    };
+                    history.events.push(crate::devtools::replay::Event::Session(
+                        front.options,
+                        front.high_score,
+                        front.demo_counter,
+                    ));
+                    self.history = Some(history);
+                    self.replace(crate::round_screens::StageClear::round_card(Box::new(game)));
+                    self.checkpoint();
+                }
+                Err(error) => {
+                    self.progress.status = error;
+                    self.replace(Box::new(crate::front_end::Title::menu(front)));
+                }
+            },
+            Some(ModeChange::Continue(front)) => match self.progress.restore(&front.rom) {
+                Ok((mut game, history)) => {
+                    self.history = Some(history);
+                    game.restart_music();
+                    self.replace(game);
+                    self.record(crate::devtools::replay::Event::Resume);
+                }
+                Err(error) => {
+                    self.progress.invalidate();
+                    self.progress.status = format!("Continue unavailable: {error}");
+                    self.replace(Box::new(crate::front_end::Title::menu(front)));
+                }
+            },
+        }
+        if checkpoint {
+            self.checkpoint();
+        }
+    }
+    pub fn menu_event(&mut self, event: crate::menu::MenuEvent) {
+        self.record(crate::devtools::replay::Event::Menu(event));
+        self.current.menu_event(event);
+    }
+    pub fn options(&self) -> Option<crate::options::GameOptions> {
+        self.current.options()
+    }
+    pub fn set_options(&mut self, options: crate::options::GameOptions) {
+        if self.game().is_some() {
+            self.record(crate::devtools::replay::Event::Options(options));
+        }
+        self.current.set_options(options);
+    }
+    pub fn enable_progress(&mut self, path: Option<std::path::PathBuf>, rom: &[u8]) {
+        self.progress = crate::progress::Progress::load(path, rom);
+    }
+    pub fn checkpoint(&mut self) {
+        if self.current.name() == "Demo" {
+            return;
+        }
+        if self
+            .game()
+            .is_some_and(|game| game.game_over() && game.continues == 0)
+        {
+            if let Err(error) = self.progress.clear() {
+                self.progress.status = error;
+            }
+            return;
+        }
+        if let Some(state) = crate::devtools::SaveState::capture(self, 0, "Continue".into()) {
+            self.progress.save(
+                state,
+                self.game()
+                    .map(|g| crate::rom::regions::checksum(g.rom()))
+                    .unwrap_or(0),
+            );
         }
     }
     /// The desktop view affects object spawning and removal, so retain width

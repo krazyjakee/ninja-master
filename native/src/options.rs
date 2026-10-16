@@ -24,12 +24,12 @@
 use crate::{
     front_end::{Front, Next, Screen},
     input::{Button, Input},
+    menu::{Menu, MenuEvent},
     modes::{Audio, Mode, ModeChange},
     render::Frame,
     rom,
     sound_events::{EFFECT_TABLE, MUSIC_TABLE, Table, VOICE_TABLE},
     title_art::TitleArt,
-    vdp::PLANE_ROW_BYTES,
 };
 
 /// Per level: spare lives, maximum health (NORMAL 2/16, EASY 9/16, HARD
@@ -53,6 +53,15 @@ const LEVEL_NAMES: usize = 0x8b42;
 /// `Player_ButtonLayouts`: per control type, the `Player_Input` bits for
 /// Start, A, C and B.
 const BUTTON_LAYOUTS: usize = 0x3c4c;
+
+pub const CONTROL_SCHEMES: [&str; 6] = [
+    "CLASSIC 1",
+    "CLASSIC 2",
+    "CLASSIC 3",
+    "CLASSIC 4",
+    "6 BUTTON",
+    "DEDICATED",
+];
 /// `Options_InvincibleSequence`: HE RUNS, JAPONESQUE, SHINOBI WALK, SAKURA,
 /// GETUFU.
 const INVINCIBLE_SEQUENCE: usize = 0x8daa;
@@ -76,7 +85,7 @@ pub struct GameOptions {
     pub shurikens: u8,
     /// `Game_Options` bit 7: throws cost nothing.
     pub infinite: bool,
-    /// Types 0..3 are the ROM layouts; 4 enables the secret six-button mode.
+    /// Types 0..3 are classic layouts, 4 is six-button, 5 is dedicated actions.
     pub control: u8,
     /// `Cheat_Invincible` = 'R': `Player_ApplyHit` and
     /// `Player_SubtractHealth` skip the damage.
@@ -125,25 +134,36 @@ impl GameOptions {
 /// A, B and C (native `Ninjutsu`, `Attack`, `Jump`) become the actions of
 /// the control type. Type 0 keeps them; directions and Start pass through.
 pub fn remap(rom: &[u8], control: u8, input: Input) -> Input {
-    if control == 4 {
-        // $22954 / $229C2: Z casts, B/X/Y attack, C jumps, A holds guard.
-        // Keep X/Y/Mode so attack selection and cycling can read them.
-        let extra = Button::X.mask() | Button::Y.mask();
+    if control >= 4 {
+        // Six-button: A guard, B melee, C jump, X/Y shuriken, Z ninjutsu.
+        // Dedicated: A/Z ninjutsu, B melee, C jump, X shuriken, Y guard.
+        let guard = if control == 4 {
+            Button::Ninjutsu
+        } else {
+            Button::Y
+        };
+        let ranged = Button::X.mask() | if control == 4 { Button::Y.mask() } else { 0 };
+        let cast = Button::Z.mask()
+            | if control == 5 {
+                Button::Ninjutsu.mask()
+            } else {
+                0
+            };
         let actions = Button::Ninjutsu.mask() | Button::Attack.mask();
         return Input {
             held: (input.held & !actions)
-                | if input.held(Button::Ninjutsu) {
+                | if input.held(guard) {
                     Button::Attack.mask()
                 } else {
                     0
                 },
             pressed: (input.pressed & !actions)
-                | if input.pressed & (extra | Button::Attack.mask()) != 0 {
+                | if input.pressed & (ranged | Button::Attack.mask()) != 0 {
                     Button::Attack.mask()
                 } else {
                     0
                 }
-                | if input.pressed(Button::Z) {
+                | if input.pressed & cast != 0 {
                     Button::Ninjutsu.mask()
                 } else {
                     0
@@ -194,38 +214,6 @@ const MUSIC: usize = 3;
 const SE: usize = 4;
 const VOICE: usize = 5;
 const EXIT: usize = 6;
-/// `Data_008A2E`: each item's offset from `Data_00C28E` (VRAM `$C28E`,
-/// plane A row 5, column 7) in 16-byte steps.
-const ITEM_ROWS: usize = 0x8a2e;
-const ITEM_BASE: usize = 0xc28e;
-/// Item labels (address, characters): `Options_TextLevel` ... `_TextExit`.
-const LABELS: [(usize, usize); ITEMS] = [
-    (0x8b3c, 5),
-    (0x8c6a, 9),
-    (0x8d30, 12),
-    (0x8e28, 5),
-    (0x8eb0, 4),
-    (0x8f28, 5),
-    (0x8f5e, 4),
-];
-/// `Options_TextTitle` "OPTION" at VRAM `$C2A0` (row 5, column 16), and
-/// the S (`$E013` at `$C2AC`) `Options_Init` adds unless `Options_Secret`.
-const TITLE_TEXT: (usize, usize) = (0x899a, 6);
-const TITLE_VRAM: usize = 0xc2a0;
-const TITLE_S: (usize, u16) = (0xc2ac, 0xe013);
-/// Item attributes: `Func_0089A0` draws with `$A000` (line 1, colour 11 =
-/// `$666` grey), the item under the cursor with `$E000` (line 3, colour 11),
-/// both with priority, so the text stays lit under shadow/highlight.
-const NORMAL: u16 = 0xa000;
-const SELECTED: u16 = 0xe000;
-/// `Data_008D4C`: NINJITSU, ATTACK, JUMP (8 characters each), selected
-/// per control type and button by the offsets in `Data_008D3C`.
-const CONTROL_NAMES: usize = 0x8d4c;
-const CONTROL_ORDER: usize = 0x8d3c;
-/// Font tiles for the control letters ('A' = 1) and the colon, and the
-/// two tiles of the infinity sign (`Func_008BFA`).
-const COLON_TILE: u16 = 0x2b;
-const INFINITY_TILES: [u16; 2] = [0x29, 0x2f];
 /// Sound test ranges (`$1D`, `$42`, `$16` records).
 const MUSIC_COUNT: i32 = 0x1d;
 const EFFECT_COUNT: i32 = 0x42;
@@ -251,6 +239,8 @@ pub struct OptionsScreen {
     screen: Screen,
     /// `$FF00F6` / 4.
     pub cursor: usize,
+    viewport: Menu,
+    pointer_input: Input,
     /// `$FF00F8`, `$FF00FA`, `$FF00FC`: sound test selections (1 on entry).
     pub music: u16,
     pub effect: u16,
@@ -280,6 +270,8 @@ impl OptionsScreen {
             art,
             screen,
             cursor: 0,
+            viewport: Menu::new(48, 6, 22),
+            pointer_input: Input::default(),
             music: 1,
             effect: 1,
             voice: 1,
@@ -333,7 +325,9 @@ impl OptionsScreen {
         let vertical =
             i32::from(input.pressed(Button::Down)) - i32::from(input.pressed(Button::Up));
         if vertical != 0 {
-            self.cursor = (self.cursor as i32 + vertical).rem_euclid(ITEMS as i32) as usize;
+            self.viewport.selected = self.cursor;
+            self.viewport.step(vertical, ITEMS);
+            self.cursor = self.viewport.selected;
         }
         // $FF9C10: A +1, else B -1, else Left/Right.
         let delta = if input.pressed(Button::Ninjutsu) {
@@ -374,7 +368,7 @@ impl OptionsScreen {
                 options.shurikens = (i32::from(options.shurikens) + delta).rem_euclid(8) as u8;
             }
             CONTROL => {
-                options.control = (i32::from(options.control) + delta).rem_euclid(5) as u8;
+                options.control = (i32::from(options.control) + delta).rem_euclid(6) as u8;
             }
             MUSIC => {
                 if input.pressed(Button::Attack) {
@@ -450,11 +444,6 @@ impl OptionsScreen {
             self.screen.leave(Next::Title);
         }
     }
-    /// An item's plane A address: `Data_00C28E` + 16 * `Data_008A2E[item]`,
-    /// plus `bytes`.
-    fn address(&self, item: usize, bytes: usize) -> usize {
-        ITEM_BASE + usize::from(byte(self.rom(), ITEM_ROWS + item)) * 16 + bytes
-    }
     fn text(&self, address: usize, length: usize) -> String {
         self.rom()
             .get(address..address + length)
@@ -467,7 +456,8 @@ impl OptionsScreen {
     }
 }
 impl Mode for OptionsScreen {
-    fn tick(&mut self, input: Input) -> Option<ModeChange> {
+    fn tick(&mut self, mut input: Input) -> Option<ModeChange> {
+        input.pressed |= std::mem::take(&mut self.pointer_input).pressed;
         if let Some(change) = self.screen.step() {
             return Some(change);
         }
@@ -485,92 +475,168 @@ impl Mode for OptionsScreen {
         None
     }
     fn draw(&self, frame: &mut Frame) {
-        let Some(art) = &self.art else {
+        if let Some(art) = &self.art {
+            art.vdp.render(frame, self.screen.fade);
+        } else {
             frame.clear([0; 3]);
-            return;
-        };
-        // The cartridge rewrites plane A cells as items change; the port
-        // writes every item into a copy of the backdrop each frame.
-        let mut art = art.clone();
-        let front = &self.screen.front;
-        let rom = &front.rom;
-        let options = front.options;
-        art.write_text(
-            TITLE_VRAM,
-            self.text(TITLE_TEXT.0, TITLE_TEXT.1).as_bytes(),
-            SELECTED,
+        }
+        let font = &self.screen.front.font;
+        frame.rect(16, 16, 288, 28, [8, 12, 24]);
+        font.draw_text(
+            frame,
+            24,
+            24,
+            "OPTIONS",
+            crate::text::Style::plain([255, 210, 100], 1),
         );
-        // Without the six-button probe's secret, "OPTION" gains its S.
-        art.vdp.write_word(TITLE_S.0, TITLE_S.1);
-        for (item, &(address, length)) in LABELS.iter().enumerate() {
-            // Func_0089A0 draws every item with $A000; the item under the
-            // cursor redraws itself with $E000.
-            let attribute = if item == self.cursor {
-                SELECTED
+        let options = self.options();
+        let ammo = if options.infinite {
+            "INFINITE".into()
+        } else {
+            options.start_ammo(self.rom()).to_string()
+        };
+        let rows = vec![
+            format!("LEVEL       < {} >", options.level_name(self.rom()).trim()),
+            format!("SHURIKENS   < {ammo} >"),
+            format!(
+                "CONTROLS    < {} >",
+                CONTROL_SCHEMES[usize::from(options.control.min(5))]
+            ),
+            format!(
+                "MUSIC <{}> {}",
+                self.music,
+                self.sound_name(MUSIC_TABLE, self.music).trim()
+            ),
+            format!(
+                "S.E.  <{}> {}",
+                self.effect,
+                self.sound_name(EFFECT_TABLE, self.effect).trim()
+            ),
+            format!(
+                "VOICE <{}> {}",
+                self.voice,
+                self.sound_name(VOICE_TABLE, self.voice).trim()
+            ),
+            "BACK".into(),
+        ];
+        self.viewport.draw(frame, font, &rows);
+        frame.rect(16, 192, 288, 32, [8, 12, 24]);
+        let style = crate::text::Style::plain([220, 224, 232], 1);
+        if self.cursor == CONTROL && options.control >= 4 {
+            let label = if options.control == 4 {
+                "A GUARD B MELEE C JUMP"
             } else {
-                NORMAL
+                "A JITSU B MELEE C JUMP"
             };
-            let mut put = |at: usize, text: &str| art.write_text(at, text.as_bytes(), attribute);
-            put(self.address(item, 0), &self.text(address, length));
-            match item {
-                LEVEL => put(self.address(item, 0x1c), &options.level_name(rom)),
-                SHURIKINS if options.infinite => {
-                    for (i, tile) in INFINITY_TILES.iter().enumerate() {
-                        art.vdp
-                            .write_word(self.address(item, 0x1c) + i * 2, tile | attribute);
-                    }
-                }
-                SHURIKINS => {
-                    // Func_004456: two BCD digits, leading zero kept.
-                    let count = byte(rom, SHURIKEN_COUNTS + usize::from(options.shurikens));
-                    put(self.address(item, 0x1c), &format!("{count:02}"));
-                }
-                CONTROL => {
-                    let at = self.address(item, 0x18);
-                    let label = if options.control == 4 {
-                        "6".to_owned()
-                    } else {
-                        char::from(b'1' + options.control).to_string()
-                    };
-                    put(at, &label);
-                    // Three lines, two rows apart: A:, B:, C: and the action.
-                    for line in 0..3u16 {
-                        let row = at + 4 + usize::from(line) * 2 * PLANE_ROW_BYTES;
-                        art.vdp.write_word(row, (1 + line) | attribute);
-                        art.vdp.write_word(row + 2, COLON_TILE | attribute);
-                        let order = CONTROL_ORDER
-                            + usize::from(options.control & 3) * 4
-                            + usize::from(line);
-                        let name = if options.control == 4 {
-                            ["GUARD   ", "SWORD   ", "JUMP    "][usize::from(line)].to_owned()
-                        } else {
-                            self.text(CONTROL_NAMES + usize::from(byte(rom, order)), 8)
+            font.draw_text(frame, 24, 196, label, style);
+            font.draw_text(
+                frame,
+                24,
+                208,
+                if options.control == 4 {
+                    "X/Y THROW Z JITSU MODE CYCLE"
+                } else {
+                    "X THROW Y GUARD Z JITSU"
+                },
+                style,
+            );
+        } else {
+            font.draw_text(frame, 24, 196, "LEFT/RIGHT: CHANGE  START: BACK", style);
+            font.draw_text(frame, 24, 208, "F1: REMAP  SOUND: B PLAY C STOP", style);
+        }
+    }
+    fn options(&self) -> Option<GameOptions> {
+        Some(self.screen.front.options)
+    }
+    fn set_options(&mut self, options: GameOptions) {
+        self.screen.front.options = options;
+    }
+    fn menu_event(&mut self, event: MenuEvent) {
+        if !self.screen.faded_in() || self.screen.leaving() {
+            return;
+        }
+        match event {
+            MenuEvent::Back => self.exit(),
+            MenuEvent::Scroll(delta) => {
+                self.viewport.scroll(delta, ITEMS);
+                self.cursor = self.viewport.selected;
+            }
+            MenuEvent::Hover(x, y) | MenuEvent::Click(x, y, _) => {
+                if let Some(row) = self.viewport.hit(x, y, ITEMS) {
+                    self.cursor = row;
+                    self.viewport.selected = row;
+                    if let MenuEvent::Click(_, _, alternate) = event {
+                        let button = match row {
+                            EXIT => Button::Start,
+                            MUSIC | SE | VOICE if x < 112 => {
+                                if alternate {
+                                    Button::Jump
+                                } else {
+                                    Button::Attack
+                                }
+                            }
+                            _ => {
+                                if x < 180 || alternate {
+                                    Button::Left
+                                } else {
+                                    Button::Right
+                                }
+                            }
                         };
-                        art.write_text(row + 4, name.as_bytes(), attribute);
+                        self.pointer_input.pressed |= button.mask();
                     }
                 }
-                MUSIC | SE | VOICE => {
-                    let (table, index) = match item {
-                        MUSIC => (MUSIC_TABLE, self.music),
-                        SE => (EFFECT_TABLE, self.effect),
-                        _ => (VOICE_TABLE, self.voice),
-                    };
-                    let name = self.sound_name(table, index);
-                    put(self.address(item, 0x16), &name);
-                }
-                _ => {}
             }
         }
-        // Options_Menu places the cursor sprite from its first frame on.
-        if self.screen.faded_in() || self.screen.leaving() {
-            art.options_cursor(rom, self.cursor);
-        }
-        art.vdp.render(frame, self.screen.fade);
     }
     fn name(&self) -> &'static str {
         "Options"
     }
     fn take_audio(&mut self) -> Audio {
         std::mem::take(&mut self.screen.audio)
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use super::*;
+    use crate::input::press;
+
+    #[test]
+    fn dedicated_actions_keep_guard_melee_throw_and_cast_independent() {
+        for scheme in [4, 5] {
+            let guard = if scheme == 4 {
+                Button::Ninjutsu
+            } else {
+                Button::Y
+            };
+            let guarded = remap(&[], scheme, press(guard));
+            assert!(guarded.held(Button::Attack));
+            assert!(!guarded.pressed(Button::Attack));
+            assert!(!guarded.pressed(Button::Ninjutsu));
+            for attack in [Button::Attack, Button::X] {
+                let action = remap(&[], scheme, press(attack));
+                assert!(action.pressed(Button::Attack));
+                assert!(!action.held(Button::Attack));
+                assert!(!action.pressed(Button::Ninjutsu));
+            }
+            assert!(remap(&[], scheme, press(Button::Z)).pressed(Button::Ninjutsu));
+            for button in [
+                Button::Left,
+                Button::Right,
+                Button::Up,
+                Button::Down,
+                Button::Jump,
+                Button::Start,
+                Button::Mode,
+            ] {
+                let mapped = remap(&[], scheme, press(button));
+                assert!(mapped.pressed(button));
+                assert!(mapped.held(button));
+            }
+        }
+        assert!(remap(&[], 4, press(Button::Y)).pressed(Button::Attack));
+        assert!(remap(&[], 5, press(Button::Ninjutsu)).pressed(Button::Ninjutsu));
+        assert!(remap(&[], 0, press(Button::Attack)).held(Button::Attack));
     }
 }

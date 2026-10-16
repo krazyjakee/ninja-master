@@ -195,13 +195,9 @@ pub fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
-/// Bind user-supplied content and prepared metadata to the canonical US image.
+/// Accept only verified retail cartridges or their prepared native data view.
 pub(crate) fn verified(rom: &[u8]) -> Result<()> {
-    if rom.len() != 0x100000 || crc32(rom) != 0x5381506f {
-        Err("asset extraction requires the verified US ROM (CRC32 5381506f)".into())
-    } else {
-        Ok(())
-    }
+    crate::rom::regions::identify(rom).map(|_| ())
 }
 
 /// One stage part as the viewer and the game present it: the ROM data plus

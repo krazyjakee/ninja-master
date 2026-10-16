@@ -1,5 +1,5 @@
 //! Runtime ROM discovery; explicit paths take precedence over remembered paths.
-use ninja_master_native::{assets::crc32, settings};
+use ninja_master_native::{rom::regions, settings};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -20,12 +20,17 @@ pub(crate) fn resolve(explicit: Option<&Path>) -> PathBuf {
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        candidates.push(dir.join("shinobi3_us.bin"));
+        candidates.extend(
+            ["shinobi3_us.bin", "shinobi3_eu.bin", "shinobi3_jp.bin"].map(|name| dir.join(name)),
+        );
         // App bundle: Contents/MacOS -> archive directory alongside the .app.
         if dir.file_name().is_some_and(|name| name == "MacOS")
             && let Some(root) = dir.ancestors().nth(3)
         {
-            candidates.push(root.join("shinobi3_us.bin"));
+            candidates.extend(
+                ["shinobi3_us.bin", "shinobi3_eu.bin", "shinobi3_jp.bin"]
+                    .map(|name| root.join(name)),
+            );
         }
     }
     if let Some(saved) = remembered_path().and_then(|path| fs::read_to_string(path).ok()) {
@@ -52,16 +57,15 @@ pub(crate) fn read(path: &Path) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("{}: {e}", path.display()))?
         .len();
     if size != 1_048_576 {
-        return Err("Choose a plain 1 MiB Shinobi III US cartridge image (.bin).".into());
+        return Err(
+            "Choose a plain 1 MiB Shinobi III US/EU or Super Shinobi II JP cartridge image (.bin)."
+                .into(),
+        );
     }
     let data = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    if data.len() != 1_048_576
-        || data.get(0x100..0x104) != Some(b"SEGA")
-        || crc32(&data) != 0x5381506f
-    {
-        return Err("This is not the supported US ROM (CRC32 5381506f). EU, JP and interleaved images are not supported.".into());
-    }
-    Ok(data)
+    let region = regions::identify(&data)?;
+    eprintln!("ROM: {} — native 60 Hz timing", region.name());
+    regions::prepare(data)
 }
 
 #[cfg(feature = "desktop")]
@@ -94,7 +98,7 @@ mod tests {
         let mut data = vec![0; 1_048_576];
         data[0x100..0x104].copy_from_slice(b"SEGA");
         fs::write(&file, data).unwrap();
-        assert!(read(&file).unwrap_err().contains("supported US ROM"));
+        assert!(read(&file).unwrap_err().contains("Unsupported ROM"));
         assert_eq!(resolve(Some(&file)), file);
         fs::remove_dir_all(dir).unwrap();
     }

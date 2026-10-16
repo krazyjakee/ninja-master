@@ -89,6 +89,7 @@ pub struct StoryArt {
     line_at: u16,
     /// `$FF00FC`: the next line's ROM address.
     text: usize,
+    japanese: bool,
 }
 impl StoryArt {
     /// The VRAM the story finds: the font `SegaLogo_S00` loaded (colour 1
@@ -98,7 +99,10 @@ impl StoryArt {
     pub fn new(rom: &[u8], frame_counter: u16) -> Result<Self> {
         let mut v = FrontVdp::new(frame_counter);
         v.one_bpp_tiles(rom, FONT_ART, 0, 1)?;
+        let japanese =
+            crate::rom::regions::identify(rom).ok() == Some(crate::rom::regions::Region::Japan);
         Ok(Self {
+            japanese,
             v,
             state: State::Load,
             count: 0,
@@ -132,8 +136,39 @@ impl StoryArt {
         v.fade_mask = FADE_MASK;
         self.lines = 0;
         self.line_at = FIRST_LINE;
-        self.count = FIRST_COUNT;
-        self.text = TEXT;
+        self.count = if self.japanese { 0x2f } else { FIRST_COUNT };
+        self.text = if self.japanese {
+            0x100000 + 0x81cc
+        } else {
+            TEXT
+        };
+        if self.japanese {
+            let mut pixels: Vec<u8> = Vec::with_capacity(160 * 128);
+            // JP story glyphs are 16 x 16, one bit per pixel. Expand to
+            // four hardware tiles in column order, below the moon's art.
+            for glyph in 0..160 {
+                for col in 0..2 {
+                    for row in 0..2 {
+                        for y in 0..8 {
+                            let bits =
+                                word(rom, 0x100000 + 0x3abda + glyph * 32 + (row * 8 + y) * 2)?;
+                            for pair in 0..4 {
+                                let first = col * 8 + pair * 2;
+                                let color = |x: usize| -> u8 {
+                                    if bits & (0x8000u16 >> x) != 0u16 {
+                                        11
+                                    } else {
+                                        0
+                                    }
+                                };
+                                pixels.push(color(first) << 4 | color(first + 1));
+                            }
+                        }
+                    }
+                }
+            }
+            v.vdp.write_tiles(1, &pixels);
+        }
         Ok(())
     }
 
@@ -144,6 +179,9 @@ impl StoryArt {
 
     /// `Story_S08`, on frames where `Frame_Counter` divides by 3.
     fn lines_step(&mut self, rom: &[u8]) -> Result<()> {
+        if self.japanese {
+            return self.japanese_lines_step(rom);
+        }
         if !self.v.frame_counter.is_multiple_of(3) {
             return Ok(());
         }
@@ -176,10 +214,56 @@ impl StoryArt {
         Ok(())
     }
 
+    fn japanese_lines_step(&mut self, rom: &[u8]) -> Result<()> {
+        if self.v.frame_counter & 1 == 0 {
+            // The JP handler's shared timer advances on both frame phases;
+            // only its scroll and row writes run on odd frames.
+            self.count += 1;
+            let at = 0xc180 + usize::from((self.line_at + 0x180) & PLANE_MASK);
+            for row in 0..3 {
+                for cell in 0..80 {
+                    self.v.vdp.write_word(at + row * 128 + cell * 2, 0x8000);
+                }
+            }
+            return Ok(());
+        }
+        self.scroll();
+        if self.count >= 0x30 {
+            self.count = 0;
+            self.lines += 1;
+            let mut column = 0;
+            while byte(rom, self.text)? != 0 {
+                let glyph = byte(rom, self.text)?;
+                if glyph >= 160 || column >= 20 {
+                    return Err("invalid Japanese story row".into());
+                }
+                let tile = 1 + u16::from(glyph) * 4;
+                let at = 0xc000 + usize::from(self.line_at) + column * 4;
+                self.v.vdp.write_word(at, 0x8000 | tile);
+                self.v.vdp.write_word(at + 2, 0x8000 | (tile + 2));
+                self.v.vdp.write_word(at + 128, 0x8000 | (tile + 1));
+                self.v.vdp.write_word(at + 130, 0x8000 | (tile + 3));
+                self.text += 1;
+                column += 1;
+            }
+            self.text += 1;
+            self.line_at = (self.line_at + 0x180) & PLANE_MASK;
+        }
+        self.count += 1;
+        if self.lines == 21 {
+            self.count = TAIL;
+            self.lines = CLEAR_EVERY;
+            self.state = State::Tail;
+        }
+        Ok(())
+    }
+
     /// `Story_S0C`, on frames where `Frame_Counter & 3` is 3. True once
     /// done.
     fn tail_step(&mut self) -> bool {
-        if self.v.frame_counter & 3 != 3 {
+        if (self.japanese && self.v.frame_counter & 1 == 0)
+            || (!self.japanese && self.v.frame_counter & 3 != 3)
+        {
             return false;
         }
         if self.lines >= CLEAR_EVERY {
@@ -230,6 +314,12 @@ impl Story {
     }
 }
 impl Mode for Story {
+    fn options(&self) -> Option<crate::options::GameOptions> {
+        Some(self.front.options)
+    }
+    fn set_options(&mut self, options: crate::options::GameOptions) {
+        self.front.options = options;
+    }
     fn tick(&mut self, input: Input) -> Option<ModeChange> {
         let Some(art) = self.art.as_mut() else {
             return Some(go(&self.front, Next::Title));

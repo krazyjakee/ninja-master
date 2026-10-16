@@ -80,7 +80,7 @@ pub struct ForestEvent {
 }
 impl ForestEvent {
     pub fn load(rom: &[u8]) -> Result<Self> {
-        let (bytes, end) = musashi(rom, 0x3e450, LIMIT)?;
+        let (bytes, end) = musashi(rom, crate::rom::regions::source(rom, 0x3e450), LIMIT)?;
         let background = bytes
             .get(..400)
             .ok_or("short event background")?

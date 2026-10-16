@@ -2,6 +2,10 @@
 //! object families.
 
 pub type Result<T> = std::result::Result<T, String>;
+#[path = "rom_regions.rs"]
+pub mod regions;
+#[path = "rom_regions_data.rs"]
+mod regions_data;
 
 pub(crate) fn byte(rom: &[u8], p: usize) -> Result<u8> {
     rom.get(p)
@@ -25,11 +29,15 @@ pub(crate) fn signed(rom: &[u8], p: usize) -> Result<i32> {
     Ok(i32::from(word(rom, p)? as i16))
 }
 pub(crate) fn pointer(rom: &[u8], p: usize) -> Result<usize> {
+    let source = regions::source(rom, p);
+    Ok(regions::pointer(rom, raw_pointer(rom, source)?))
+}
+pub(crate) fn raw_pointer(rom: &[u8], p: usize) -> Result<usize> {
     Ok((usize::from(word(rom, p)?) << 16) | usize::from(word(rom, p + 2)?))
 }
 /// A 16.16 long immediate, e.g. the operand of `move.l #$FFFD8000,+$1C(a0)`.
 pub(crate) fn long(rom: &[u8], p: usize) -> Result<i32> {
-    Ok(pointer(rom, p)? as u32 as i32)
+    Ok(raw_pointer(rom, p)? as u32 as i32)
 }
 pub(crate) fn words<const N: usize>(rom: &[u8], p: usize) -> Result<[u16; N]> {
     let mut out = [0; N];

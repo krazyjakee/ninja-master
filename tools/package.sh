@@ -147,8 +147,8 @@ rounds. Full playthroughs have been tested on Linux and Windows.
 YOU MUST SUPPLY YOUR OWN ROM
 ----------------------------
 This package contains no game data. The executable decodes graphics, stage
-data, music and sound from the original US cartridge image at start-up, and
-refuses any other image. Provide a dump of your own cartridge:
+data, music and sound from your verified retail cartridge image at start-up.
+Provide a dump of your own cartridge:
 
   Region  USA ("Shinobi III - Return of the Ninja Master")
   Size    1,048,576 bytes (1 MiB, plain big-endian .bin; no header, not interleaved)
@@ -158,7 +158,10 @@ refuses any other image. Provide a dump of your own cartridge:
 Check it with:
   $verify_example
 
-The European and Japanese images are not accepted.
+Also supported (same size and format):
+  Europe CRC32 0b6d3eb5, SHA-1 23579c8f7e2396080b478b113aff36d2382395a3
+  Japan / Korea CRC32 5b412816, SHA-1 e3dbe326aa93320d405c561c306fc3954ab8ea7c
+All regions use the native port's 60 Hz simulation and audio cadence.
 
 How the ROM is found
 --------------------

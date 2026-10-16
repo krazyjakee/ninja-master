@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Ninja Master
-Comment=Native Shinobi III port (requires your own US ROM)
+Comment=Native Shinobi III port (requires your own US, EU or JP ROM)
 Exec=ninja-master
 Icon=ninja-master
 Terminal=false

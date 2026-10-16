@@ -194,6 +194,6 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.txt" <<'EOF'
           Complete native desktop port of Shinobi III for Windows x86_64, Linux x86_64, macOS Intel and macOS Apple Silicon. All seven rounds are playable from start to finish, with full playthroughs tested on Linux and Windows. Windows includes an MSI installer and portable ZIP; Linux includes DEB, RPM and a portable archive; macOS includes a DMG and portable app archive for each architecture. SDL2 is bundled on Windows and macOS. Mac packages require macOS 15 or later. Windows installers are not publisher signed; Mac apps are ad-hoc signed and not notarized.
 
-          Supply your own original Shinobi III USA ROM: 1,048,576 bytes, CRC32 5381506f. Original game data is decoded from the cartridge at runtime; no ROM or extracted game assets are included. See the README for controls and installation instructions.
+          Supply your own original 1 MiB retail ROM: US CRC32 5381506f, EU 0b6d3eb5, or JP (The Super Shinobi II) 5b412816. Original game data is decoded from the cartridge at runtime; no ROM or extracted game assets are included. See the README for controls and installation instructions.
           EOF
           gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Ninja Master ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/release-notes.txt"

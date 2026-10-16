@@ -325,7 +325,10 @@ impl Combat {
             }
             let kind = word(rom, p + 6)?;
             bases.insert(kind, 0x2300u16.wrapping_add(base));
-            let mut group = pointer(rom, groups + pointer(rom, indices + usize::from(kind))?)?;
+            let mut group = pointer(
+                rom,
+                groups + crate::rom::raw_pointer(rom, indices + usize::from(kind))?,
+            )?;
             let mut terminated = false;
             for _ in 0..256 {
                 let destination = word(rom, group)?;

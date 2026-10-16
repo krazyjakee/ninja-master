@@ -21,15 +21,15 @@ use crate::{
     attract::Demo,
     game::Game,
     input::{Button, Input},
+    menu::{Menu, MenuEvent},
     modes::{Audio, Mode, ModeChange},
     options::{GameOptions, OptionsScreen},
     render::{FADE_STEPS, Fade, Frame},
-    round_screens::StageClear,
     sega_logo::{self, Exit, Logo, Variant},
     sound_events::Table,
     story::Story,
     text::Font,
-    title_art::{MENU_ITEMS, TitleArt},
+    title_art::TitleArt,
 };
 
 pub use crate::intro::{INTRO_TICKS, Intro, REVEAL_TICKS, TITLE_FADE_MASK};
@@ -43,8 +43,8 @@ pub const WHITE: u16 = 0x0eee;
 const TITLE_MUSIC: u8 = 0x0d;
 /// `HighScore_Init` (`$115B4`): 10000 at power-on.
 pub const HIGH_SCORE_INIT: u32 = 10_000;
-/// `Title_FadeIn` then 12 one-second ticks of `Title_PressStart`; the menu
-/// times out after 8 seconds without a press.
+/// `Title_FadeIn` then 12 seconds of `Title_PressStart`. Native menus stay
+/// open until dismissed; the attract demo still runs from the idle title.
 pub const TITLE_TICKS: u32 = 12 * 60;
 pub const MENU_TICKS: u32 = 8 * 60;
 /// `Title_Init`'s call runs through 29 frames after the reveal (3132..3160
@@ -53,11 +53,10 @@ pub const MENU_TICKS: u32 = 8 * 60;
 pub const TITLE_INIT_FRAMES: u32 = 29;
 const TITLE_INIT_LOST: u32 = 28;
 /// SEGA logo (the zoom, as at power-on): frames 18..233 of the attract
-/// capture, the last call installing `Mode_Intro`. Start counts once
-/// `Mode_Routine` passes `$C` (`Func_006B6C`), from the 64-frame hold
-/// before the fade: after `LOGO_START_FROM` ticks.
+/// capture, the last call installing `Mode_Intro`. Start skips from every
+/// phase in the native port.
 pub const LOGO_TICKS: u32 = sega_logo::ZOOM_TICKS;
-pub const LOGO_START_FROM: u32 = sega_logo::ZOOM_START_TICK - 1;
+pub const LOGO_START_FROM: u32 = 0;
 /// `SegaLogo_S00`: voice `$0D` ("SEGA").
 const SEGA_VOICE: u8 = 0x0d;
 /// What survives between the front-end modes: in the cartridge the
@@ -68,6 +67,9 @@ pub struct Front {
     pub rom: Rc<[u8]>,
     pub font: Font,
     pub options: GameOptions,
+    pub title_selection: usize,
+    pub title_first: usize,
+    pub return_to_menu: bool,
     pub high_score: u32,
     pub demo_counter: u16,
     pub effects: [bool; 4],
@@ -95,6 +97,9 @@ impl Front {
             rom: Rc::from(rom),
             font: Font::load(rom)?,
             options: GameOptions::default(),
+            title_selection: 0,
+            title_first: 0,
+            return_to_menu: false,
             high_score: HIGH_SCORE_INIT,
             demo_counter: 0,
             effects: [true; 4],
@@ -111,6 +116,9 @@ impl Front {
             rom: Rc::from(game.rom()),
             font: game.font().clone(),
             options: game.options,
+            title_selection: 0,
+            title_first: 0,
+            return_to_menu: true,
             high_score: game.high_score.max(game.score()),
             demo_counter: game.demo_counter,
             effects: game.effects(),
@@ -147,6 +155,7 @@ pub enum Next {
     Options,
     /// `Title_ModeGame`: `Mode_Game`, which starts with the round card.
     Game,
+    Continue,
     /// `Title_ModeDemo`: `Mode_DemoStart` counts the demo and runs it.
     Demo,
     /// Native: the title menu's QUIT.
@@ -162,10 +171,8 @@ pub fn go(front: &Front, next: Next) -> ModeChange {
         Next::Story => Box::new(Story::new(front)),
         Next::Title => Box::new(Title::new(front)),
         Next::Options => Box::new(OptionsScreen::new(front)),
-        Next::Game => match front.new_game() {
-            Ok(game) => StageClear::round_card(Box::new(game)),
-            Err(_) => Box::new(SegaLogo::new(front)),
-        },
+        Next::Game => return ModeChange::NewGame(front),
+        Next::Continue => return ModeChange::Continue(front),
         Next::Demo => {
             let mut front = front;
             front.demo_counter = front.demo_counter.wrapping_add(1);
@@ -266,11 +273,21 @@ impl SegaLogo {
     }
 }
 impl Mode for SegaLogo {
+    fn options(&self) -> Option<GameOptions> {
+        Some(self.front.options)
+    }
+    fn set_options(&mut self, options: GameOptions) {
+        self.front.options = options;
+    }
     fn tick(&mut self, input: Input) -> Option<ModeChange> {
         let exit = match self.logo.as_mut() {
             Some(logo) => logo.tick(input.pressed(Button::Start))?,
             None => Exit::Intro,
         };
+        if exit == Exit::Title {
+            self.audio.push(0xff);
+            self.front.music = None;
+        }
         if let Some(logo) = &self.logo {
             self.front.frame_counter = logo.v.frame_counter;
             self.front.fade_mask = logo.v.fade_mask;
@@ -300,9 +317,14 @@ impl Mode for SegaLogo {
 /// `Mode_Title` (`$774E`) over the title picture (`crate::title_art`).
 pub struct Title {
     screen: Screen,
-    /// `Title_Menu`: the cursor (`$FF00FA`, 0 GAME, 1 OPTIONS; native 2
-    /// QUIT); `None` while PRESS START BUTTON is up.
+    /// The selected visible row: New Game, optional Continue, Options,
+    /// Quit; `None` while PRESS START BUTTON is up.
     pub menu: Option<usize>,
+    viewport: Menu,
+    confirmation: Option<Menu>,
+    resume_available: bool,
+    message: String,
+    pointer_input: Input,
     /// Frames left before the demo (`$FF00F6` one-second ticks).
     timer: u32,
     /// The picture, sprites and CRAM as `Title_Init` built them.
@@ -352,7 +374,13 @@ impl Title {
             screen.audio.request(music);
             screen.front.music = music;
         }
-        Self {
+        let return_to_menu = screen.front.return_to_menu;
+        let mut title = Self {
+            viewport: Menu::new(152, 3, 16),
+            confirmation: None,
+            resume_available: false,
+            message: String::new(),
+            pointer_input: Input::default(),
             // The title fades its own CRAM in; the screen fade only runs
             // the fade out.
             screen,
@@ -361,7 +389,11 @@ impl Title {
             art,
             fading,
             shown,
+        };
+        if return_to_menu {
+            title.open_menu();
         }
+        title
     }
     /// Native: the title with its menu already open, where the pause
     /// window's QUIT TO MENU leads.
@@ -370,13 +402,39 @@ impl Title {
         title.open_menu();
         title
     }
-    /// `Title_PressStart` on input: the menu with the cursor on GAME.
+    /// Open the menu, restoring the previous selection and scroll position.
     fn open_menu(&mut self) {
-        self.menu = Some(0);
+        self.viewport.selected = self.screen.front.title_selection;
+        self.viewport.first = self.screen.front.title_first;
+        self.viewport.reveal(4);
+        self.menu = Some(self.viewport.selected);
         self.timer = MENU_TICKS;
         if let Some(art) = self.art.as_mut() {
-            let _ = art.show_menu(&self.screen.front.rom);
+            let _ = art.text(&self.screen.front.rom, crate::title_art::BLANK);
+            // Preserve the cartridge menu's sprite-chain head. The native
+            // panel covers the original cursor while drawing its own focus.
             art.title_cursor(0);
+        }
+    }
+    fn activate(&mut self) {
+        if let Some(confirm) = &self.confirmation {
+            if confirm.selected == 1 {
+                self.screen.leave(Next::Game);
+            }
+            self.confirmation = None;
+            return;
+        }
+        match self.viewport.selected {
+            0 if self.resume_available => self.confirmation = Some(Menu::new(168, 2, 16)),
+            0 => self.screen.leave(Next::Game),
+            1 if self.resume_available => self.screen.leave(Next::Continue),
+            item if item == 1 + usize::from(self.resume_available) => {
+                self.screen.front.title_selection = self.viewport.selected;
+                self.screen.front.title_first = self.viewport.first;
+                self.screen.front.return_to_menu = true;
+                self.screen.leave(Next::Options);
+            }
+            _ => self.screen.leave(Next::Quit),
         }
     }
     /// `Title_FadeIn`: one CRAM update on the frames `$FF16E8` allows;
@@ -419,42 +477,29 @@ impl Mode for Title {
         if let Some(art) = self.art.as_mut() {
             art.animate(u32::from(self.screen.front.frame_counter));
         }
-        let any = input.held != 0 || input.pressed != 0;
+        let mut input = input;
+        input.pressed |= std::mem::take(&mut self.pointer_input).pressed;
         match self.menu {
-            // Title_PressStart: any input opens the menu.
-            None if any => self.open_menu(),
+            None if input.pressed != 0 => self.open_menu(),
             None => {}
-            Some(item) if input.pressed(Button::Start) => {
-                // Title_Selected: fade out to Mode_Game or Mode_Options
-                // (native: or out of the program).
-                self.screen.leave(match item {
-                    0 => Next::Game,
-                    1 => Next::Options,
-                    _ => Next::Quit,
-                });
-                return None;
-            }
-            Some(item) => {
-                if input.pressed != 0 {
-                    self.timer = MENU_TICKS;
+            Some(_) => {
+                let step = i32::from(input.pressed(Button::Down) || input.pressed(Button::Right))
+                    - i32::from(input.pressed(Button::Up) || input.pressed(Button::Left));
+                if let Some(menu) = &mut self.confirmation {
+                    menu.step(step, 2);
+                } else {
+                    self.viewport
+                        .step(step, 3 + usize::from(self.resume_available));
+                    self.menu = Some(self.viewport.selected);
                 }
-                // The cartridge toggles its two items on any direction;
-                // with QUIT, Up/Left step back and Down/Right forward.
-                let step: i32 = [
-                    (Button::Up, -1),
-                    (Button::Left, -1),
-                    (Button::Down, 1),
-                    (Button::Right, 1),
-                ]
-                .iter()
-                .filter(|&&(button, _)| input.pressed(button))
-                .map(|&(_, step)| step)
-                .sum();
-                let item = (item as i32 + step).rem_euclid(MENU_ITEMS as i32) as usize;
-                self.menu = Some(item);
-                if let Some(art) = self.art.as_mut() {
-                    art.title_cursor(item);
+                if input.pressed(Button::Start)
+                    || input.pressed(Button::Attack)
+                    || input.pressed(Button::Jump)
+                {
+                    self.activate();
                 }
+                // Open menus remain available until the player leaves them.
+                self.timer = MENU_TICKS;
             }
         }
         self.timer = self.timer.saturating_sub(1);
@@ -474,6 +519,91 @@ impl Mode for Title {
             }
             None => frame.clear([0; 3]),
         }
+        if self.menu.is_some() {
+            let font = &self.screen.front.font;
+            if let Some(menu) = &self.confirmation {
+                frame.rect(16, 128, 288, 24, [8, 12, 24]);
+                font.draw_text(
+                    frame,
+                    24,
+                    136,
+                    "REPLACE SAVED RUN?",
+                    crate::text::Style::plain([255, 210, 100], 1),
+                );
+                menu.draw(frame, font, &["CANCEL".into(), "START NEW GAME".into()]);
+            } else {
+                let mut rows = vec!["NEW GAME".into()];
+                if self.resume_available {
+                    rows.push("CONTINUE".into());
+                }
+                rows.extend(["OPTIONS".into(), "QUIT".into()]);
+                self.viewport.draw(frame, font, &rows);
+                if !self.message.is_empty() {
+                    let text: String = self.message.chars().take(36).collect();
+                    font.draw_text(
+                        frame,
+                        16,
+                        216,
+                        &text,
+                        crate::text::Style::plain([255, 210, 100], 1),
+                    );
+                }
+            }
+        }
+    }
+    fn menu_context(&mut self, available: bool, status: &str) {
+        self.resume_available = available;
+        self.viewport.reveal(3 + usize::from(available));
+        if self.menu.is_some() {
+            self.menu = Some(self.viewport.selected);
+        }
+        if !status.is_empty() {
+            self.message = status.to_ascii_uppercase();
+        }
+    }
+    fn options(&self) -> Option<GameOptions> {
+        Some(self.screen.front.options)
+    }
+    fn set_options(&mut self, options: GameOptions) {
+        self.screen.front.options = options;
+    }
+    fn menu_event(&mut self, event: MenuEvent) {
+        if self.screen.leaving() || self.fading.is_some() || self.screen.ticks <= TITLE_INIT_FRAMES
+        {
+            return;
+        }
+        if self.menu.is_none() {
+            if matches!(event, MenuEvent::Click(..)) {
+                self.open_menu();
+            }
+            return;
+        }
+        if matches!(event, MenuEvent::Back) {
+            self.pointer_input = Input::default();
+            if self.confirmation.take().is_none() {
+                self.menu = None;
+            }
+            return;
+        }
+        let count = if self.confirmation.is_some() {
+            2
+        } else {
+            3 + usize::from(self.resume_available)
+        };
+        let menu = self.confirmation.as_mut().unwrap_or(&mut self.viewport);
+        match event {
+            MenuEvent::Hover(x, y) | MenuEvent::Click(x, y, _) => {
+                if let Some(row) = menu.hit(x, y, count) {
+                    menu.selected = row;
+                    if matches!(event, MenuEvent::Click(..)) {
+                        self.pointer_input.pressed |= Button::Start.mask();
+                    }
+                }
+            }
+            MenuEvent::Scroll(delta) => menu.scroll(delta, count),
+            MenuEvent::Back => {}
+        }
+        self.menu = Some(self.viewport.selected);
     }
     fn name(&self) -> &'static str {
         "Title"

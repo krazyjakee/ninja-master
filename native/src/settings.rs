@@ -119,6 +119,7 @@ pub struct Entry {
 pub struct Settings {
     /// Empty uses original art; otherwise a library entry or legacy pack path.
     pub art_pack: String,
+    pub game: crate::options::GameOptions,
     /// Initial window size as a multiple of the selected frame size.
     pub scale: u32,
     pub fullscreen: bool,
@@ -149,6 +150,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             art_pack: String::new(),
+            game: crate::options::GameOptions::default(),
             scale: DEFAULT_SCALE,
             fullscreen: false,
             widescreen: true,
@@ -223,6 +225,31 @@ impl Settings {
 
     fn apply(&mut self, section: &str, key: &str, value: &str) -> Applied {
         match (section, key) {
+            ("game", "level" | "shurikens" | "control") => match value.parse::<u8>() {
+                Ok(value)
+                    if value
+                        <= match key {
+                            "level" => 3,
+                            "shurikens" => 7,
+                            _ => 5,
+                        } =>
+                {
+                    match key {
+                        "level" => self.game.level = value,
+                        "shurikens" => self.game.shurikens = value,
+                        _ => self.game.control = value,
+                    }
+                    Applied::Ok
+                }
+                _ => Applied::Invalid,
+            },
+            ("game", "infinite") => match parse_bool(value) {
+                Some(value) => {
+                    self.game.infinite = value;
+                    Applied::Ok
+                }
+                None => Applied::Invalid,
+            },
             ("art", "pack") => {
                 self.art_pack = value.to_owned();
                 Applied::Ok
@@ -373,6 +400,11 @@ impl Settings {
         extras(&mut out, "audio");
         out.push_str(&format!("\n[input]\ncontroller = {}\n", self.controller));
         extras(&mut out, "input");
+        out.push_str(&format!(
+            "\n[game]\nlevel = {}\nshurikens = {}\ncontrol = {}\ninfinite = {}\n",
+            self.game.level, self.game.shurikens, self.game.control, self.game.infinite
+        ));
+        extras(&mut out, "game");
         for (section, bindings) in [("keyboard", &self.keyboard), ("gamepad", &self.gamepad)] {
             out.push_str(&format!("\n[{section}]\n"));
             for (button, key, _) in PAD_CONTROLS {
@@ -381,7 +413,7 @@ impl Settings {
             extras(&mut out, section);
         }
         let known = [
-            "", "display", "art", "audio", "input", "keyboard", "gamepad",
+            "", "display", "art", "audio", "input", "game", "keyboard", "gamepad",
         ];
         let mut others: Vec<&str> = Vec::new();
         for entry in &self.extra {
@@ -461,6 +493,7 @@ pub enum Device {
 #[derive(Clone, Debug)]
 pub struct Rebinder {
     step: usize,
+    control: u8,
     keyboard: Bindings,
     gamepad: Bindings,
 }
@@ -469,6 +502,7 @@ impl Rebinder {
     pub fn new(settings: &Settings) -> Self {
         Self {
             step: 0,
+            control: settings.game.control,
             keyboard: settings.keyboard.clone(),
             gamepad: settings.gamepad.clone(),
         }
@@ -476,9 +510,13 @@ impl Rebinder {
 
     /// `(1-based step, total, label)` for the control awaiting input.
     pub fn prompt(&self) -> Option<(usize, usize, &'static str)> {
-        PAD_CONTROLS
-            .get(self.step)
-            .map(|(_, _, label)| (self.step + 1, PAD_CONTROLS.len(), *label))
+        PAD_CONTROLS.get(self.step).map(|(button, _, _)| {
+            (
+                self.step + 1,
+                PAD_CONTROLS.len(),
+                control_label(*button, self.control),
+            )
+        })
     }
 
     pub fn is_done(&self) -> bool {
@@ -507,12 +545,61 @@ impl Rebinder {
     }
 }
 
+/// Names of physical pad inputs and their actions in the selected scheme.
+pub fn control_label(button: Button, control: u8) -> &'static str {
+    match (control, button) {
+        (1, Button::Attack) => "B (jump)",
+        (1, Button::Jump) => "C (attack)",
+        (2, Button::Ninjutsu) => "A (attack)",
+        (2, Button::Jump) => "C (ninjutsu)",
+        (2, Button::Attack) => "B (jump)",
+        (3, Button::Ninjutsu) => "A (jump)",
+        (3, Button::Jump) => "C (ninjutsu)",
+        (4, Button::Ninjutsu) => "A (guard)",
+        (4 | 5, Button::Attack) => "B (melee)",
+        (5, Button::Y) => "Y (guard)",
+        (_, Button::Y) => "Y (shuriken)",
+        _ => PAD_CONTROLS
+            .iter()
+            .find(|(b, _, _)| *b == button)
+            .map_or("", |(_, _, label)| label),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn names(list: &[String]) -> Vec<&str> {
         list.iter().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn game_choices_and_dedicated_bindings_persist_with_legacy_defaults() {
+        assert_eq!(
+            Settings::parse("[display]\nscale = 2").0.game,
+            crate::options::GameOptions::default()
+        );
+        for control in 0..=5 {
+            let mut settings = Settings {
+                game: crate::options::GameOptions {
+                    level: 3,
+                    shurikens: 7,
+                    infinite: true,
+                    control,
+                    invincible: false,
+                },
+                ..Settings::default()
+            };
+            settings.keyboard.assign(Button::Y, "G");
+            settings.gamepad.assign(Button::Y, "leftshoulder");
+            assert_eq!(Settings::parse(&settings.to_ini()).0, settings);
+        }
+        let (settings, warnings) = Settings::parse("[game]\ncontrol = 6\nlevel = 4\nshurikens = 8");
+        assert_eq!(warnings.len(), 3);
+        assert_eq!(settings.game, crate::options::GameOptions::default());
+        assert_eq!(control_label(Button::Ninjutsu, 4), "A (guard)");
+        assert_eq!(control_label(Button::Y, 5), "Y (guard)");
     }
 
     #[test]

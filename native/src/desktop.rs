@@ -174,6 +174,34 @@ fn game_rect(canvas: &WindowCanvas, settings: &Settings) -> Result<Rect, String>
     Ok(presentation_rect(width, height, settings))
 }
 
+/// Invert the actual presentation, including DPI, letterboxing and CRT glass.
+fn menu_point(
+    x: i32,
+    y: i32,
+    window: (u32, u32),
+    output: (u32, u32),
+    rect: Rect,
+    frame_width: usize,
+    curvature: f64,
+) -> Option<(i32, i32)> {
+    if window.0 == 0 || window.1 == 0 || rect.width() == 0 || rect.height() == 0 {
+        return None;
+    }
+    let x = f64::from(x) * f64::from(output.0) / f64::from(window.0);
+    let y = f64::from(y) * f64::from(output.1) / f64::from(window.1);
+    let px = (x - f64::from(rect.x())) / f64::from(rect.width()) * 2.0 - 1.0;
+    let py = (y - f64::from(rect.y())) / f64::from(rect.height()) * 2.0 - 1.0;
+    let u = (px * (1.0 + curvature * py * py) + 1.0) * 0.5;
+    let v = (py * (1.0 + curvature * px * px) + 1.0) * 0.5;
+    if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
+        return None;
+    }
+    Some((
+        (u * frame_width as f64).floor() as i32 - ((frame_width - WIDTH) / 2) as i32,
+        (v * HEIGHT as f64).floor() as i32,
+    ))
+}
+
 fn art_output_scale(rect: Rect, width: usize) -> usize {
     (rect.width() as usize)
         .div_ceil(width)
@@ -390,6 +418,9 @@ pub(super) fn run(
     if options.widescreen {
         settings.widescreen = true;
     }
+    if let Scene::Play(modes) = &mut *scene {
+        modes.set_options(settings.game);
+    }
     let mut map = InputMap::new(&settings);
     *frame = Frame::new(settings.frame_width());
     let mut art_status = String::new();
@@ -535,6 +566,13 @@ pub(super) fn run(
             .and_then(Path::parent)
             .map(|dir| dir.join("saves"));
         tools.enable_disk_saves(modes, effects, dir);
+        modes.enable_progress(
+            config_path
+                .as_deref()
+                .and_then(Path::parent)
+                .map(|dir| dir.join("continue.nms")),
+            rom,
+        );
     }
 
     let controllers = sdl.game_controller()?;
@@ -684,6 +722,61 @@ pub(super) fn run(
                     continue;
                 }
             }
+            if focused
+                && !show_panel
+                && rebinder.is_none()
+                && capture.is_none()
+                && let Scene::Play(modes) = &mut *scene
+            {
+                use ninja_master_native::menu::MenuEvent;
+                let pointer = match event {
+                    Event::MouseMotion { x, y, .. } => Some((x, y, None)),
+                    Event::MouseButtonDown {
+                        x, y, mouse_btn, ..
+                    } if matches!(
+                        mouse_btn,
+                        sdl2::mouse::MouseButton::Left | sdl2::mouse::MouseButton::Right
+                    ) =>
+                    {
+                        Some((x, y, Some(mouse_btn == sdl2::mouse::MouseButton::Right)))
+                    }
+                    _ => None,
+                };
+                if let Some((x, y, click)) = pointer {
+                    let rect = game_rect(&canvas, &settings)?;
+                    let output = canvas.output_size()?;
+                    if let Some((x, y)) = menu_point(
+                        x,
+                        y,
+                        canvas.window().size(),
+                        output,
+                        rect,
+                        frame.width(),
+                        if settings.crt && crt.is_ok() {
+                            f64::from(settings.crt_curvature) * 0.0018
+                        } else {
+                            0.0
+                        },
+                    ) {
+                        modes.menu_event(match click {
+                            Some(alternate) => MenuEvent::Click(x, y, alternate),
+                            None => MenuEvent::Hover(x, y),
+                        });
+                        modes.draw(frame);
+                        upload = true;
+                    }
+                }
+                if let Event::MouseWheel { y, direction, .. } = event {
+                    let delta = if direction == sdl2::mouse::MouseWheelDirection::Flipped {
+                        y
+                    } else {
+                        -y
+                    };
+                    modes.menu_event(MenuEvent::Scroll(delta));
+                    scene.draw(frame);
+                    upload = true;
+                }
+            }
             match event {
                 Event::Quit { .. } => break 'running,
                 Event::ControllerButtonDown { button, .. } if focused && rebinder.is_some() => {
@@ -729,7 +822,15 @@ pub(super) fn run(
                     keys.insert(key);
                     match key {
                         _ if repeat => {}
-                        Scancode::Escape if options.play => escape_pause = true,
+                        Scancode::Escape if options.play => {
+                            if let Scene::Play(modes) = &mut *scene {
+                                if modes.name() == "Game" {
+                                    escape_pause = true;
+                                } else {
+                                    modes.menu_event(ninja_master_native::menu::MenuEvent::Back);
+                                }
+                            }
+                        }
                         Scancode::Escape => break 'running,
                         Scancode::F1 => {
                             show_panel = !show_panel;
@@ -947,6 +1048,19 @@ pub(super) fn run(
                     audio.push_tick(&samples, rendered, gain, &mut floats);
                 }
                 total_ticks += 1;
+                if let Scene::Play(modes) = &mut *scene {
+                    if total_ticks.is_multiple_of(300) {
+                        modes.checkpoint();
+                    }
+                    if let Some(mut game_options) = modes.options() {
+                        // Secret invincibility is run state, never an application default.
+                        game_options.invincible = false;
+                        if settings.game != game_options {
+                            settings.game = game_options;
+                            save_settings(config_path.as_deref(), &settings);
+                        }
+                    }
+                }
                 if options.frames.is_some_and(|limit| total_ticks >= limit)
                     || scene.quit_requested()
                 {
@@ -1169,6 +1283,13 @@ pub(super) fn run(
                     text_input_active = wants_text;
                 }
                 if before != settings {
+                    if before.game != settings.game
+                        && let Scene::Play(modes) = &mut *scene
+                    {
+                        let mut game_options = modes.options().unwrap_or(settings.game);
+                        game_options.control = settings.game.control;
+                        modes.set_options(game_options);
+                    }
                     if before.fullscreen != settings.fullscreen
                         || (!settings.fullscreen
                             && (before.scale != settings.scale
@@ -1243,6 +1364,9 @@ pub(super) fn run(
             std::thread::sleep(clock.until_tick().saturating_sub(previous.elapsed()));
         }
     }
+    if let Scene::Play(modes) = scene {
+        modes.checkpoint();
+    }
     Ok(total_ticks)
 }
 
@@ -1297,6 +1421,30 @@ fn gray_out(pixels: &[u8], output: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pointer_mapping_uses_dpi_letterboxing_widescreen_and_crt() {
+        for width in [320, 398, 800] {
+            let rect = Rect::new(100, 50, 800, 448);
+            assert_eq!(
+                menu_point(500, 274, (1000, 600), (1000, 600), rect, width, 0.0),
+                Some((160, 112))
+            );
+            assert_eq!(
+                menu_point(250, 137, (500, 300), (1000, 600), rect, width, 0.0),
+                Some((160, 112))
+            );
+            assert_eq!(
+                menu_point(500, 274, (1000, 600), (1000, 600), rect, width, 0.18),
+                Some((160, 112))
+            );
+            assert!(menu_point(0, 0, (1000, 600), (1000, 600), rect, width, 0.0).is_none());
+        }
+        let rect = Rect::new(0, 0, 320, 224);
+        // Same inverse barrel mapping as crt.frag, away from the centre.
+        let mapped = menu_point(240, 168, (320, 224), (320, 224), rect, 320, 0.18).unwrap();
+        assert_eq!(mapped, (243, 170));
+    }
 
     #[test]
     #[ignore = "requires a desktop OpenGL display"]

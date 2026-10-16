@@ -30,6 +30,9 @@ pub(crate) enum Event {
     Locks(bool, bool),
     Resume,
     ViewWidth(u16),
+    Menu(crate::menu::MenuEvent),
+    Options(crate::options::GameOptions),
+    Session(crate::options::GameOptions, u32, u16),
 }
 
 impl History {
@@ -47,6 +50,16 @@ impl History {
         let mut view_width = None;
         for event in &self.events {
             match *event {
+                Event::Menu(event) => modes.menu_event(event),
+                Event::Options(options) => modes.set_options(options),
+                Event::Session(options, high_score, demo_counter) => {
+                    let game = modes.game_mut().ok_or("session has no gameplay")?;
+                    game.start_session(options);
+                    game.high_score = high_score;
+                    game.demo_counter = demo_counter;
+                    let game = game.clone();
+                    modes.replace(crate::round_screens::StageClear::round_card(Box::new(game)));
+                }
                 Event::Tick(input) => {
                     if let Some(width) = view_width {
                         modes.set_view_width(width);
@@ -136,6 +149,30 @@ impl History {
         out.extend((self.events.len() as u32).to_le_bytes());
         for event in &self.events {
             match *event {
+                Event::Menu(event) => {
+                    use crate::menu::MenuEvent;
+                    out.push(13);
+                    let (tag, x, y) = match event {
+                        MenuEvent::Hover(x, y) => (0, x, y),
+                        MenuEvent::Click(x, y, false) => (1, x, y),
+                        MenuEvent::Click(x, y, true) => (2, x, y),
+                        MenuEvent::Scroll(delta) => (3, delta, 0),
+                        MenuEvent::Back => (4, 0, 0),
+                    };
+                    out.push(tag);
+                    out.extend(x.to_le_bytes());
+                    out.extend(y.to_le_bytes());
+                }
+                Event::Options(options) => {
+                    out.push(11);
+                    encode_options(options, out);
+                }
+                Event::Session(options, high_score, demo_counter) => {
+                    out.push(12);
+                    encode_options(options, out);
+                    out.extend(high_score.to_le_bytes());
+                    out.extend(demo_counter.to_le_bytes());
+                }
                 Event::Tick(input) => {
                     out.push(0);
                     out.extend(input.held.to_le_bytes());
@@ -198,6 +235,22 @@ impl History {
                     }
                     Event::ViewWidth(width)
                 }
+                11 => Event::Options(decode_options(reader)?),
+                12 => Event::Session(decode_options(reader)?, reader.u32()?, reader.u16()?),
+                13 => {
+                    use crate::menu::MenuEvent;
+                    let tag = reader.byte()?;
+                    let x = reader.u32()? as i32;
+                    let y = reader.u32()? as i32;
+                    Event::Menu(match tag {
+                        0 => MenuEvent::Hover(x, y),
+                        1 => MenuEvent::Click(x, y, false),
+                        2 => MenuEvent::Click(x, y, true),
+                        3 => MenuEvent::Scroll(x),
+                        4 => MenuEvent::Back,
+                        _ => return Err("invalid saved menu input".into()),
+                    })
+                }
                 _ => return Err("unknown saved action".into()),
             });
         }
@@ -246,4 +299,27 @@ impl<'a> Reader<'a> {
         }
         Ok(id)
     }
+}
+
+fn encode_options(options: crate::options::GameOptions, out: &mut Vec<u8>) {
+    out.extend([
+        options.level,
+        options.shurikens,
+        u8::from(options.infinite),
+        options.control,
+        u8::from(options.invincible),
+    ]);
+}
+fn decode_options(reader: &mut Reader<'_>) -> Result<crate::options::GameOptions, String> {
+    let options = crate::options::GameOptions {
+        level: reader.byte()?,
+        shurikens: reader.byte()?,
+        infinite: reader.boolean()?,
+        control: reader.byte()?,
+        invincible: reader.boolean()?,
+    };
+    if options.level > 3 || options.shurikens > 7 || options.control > 5 {
+        return Err("invalid saved options".into());
+    }
+    Ok(options)
 }

@@ -146,6 +146,12 @@ impl Demo {
     }
 }
 impl Mode for Demo {
+    fn options(&self) -> Option<crate::options::GameOptions> {
+        Some(self.front.options)
+    }
+    fn set_options(&mut self, options: crate::options::GameOptions) {
+        self.front.options = options;
+    }
     fn tick(&mut self, input: Input) -> Option<ModeChange> {
         // Demo_CheckStart: Start on the real pad ends the demo.
         if self.step != Step::FadeOut && input.pressed(Button::Start) {

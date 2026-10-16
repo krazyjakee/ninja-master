@@ -600,14 +600,29 @@ impl Combat {
         player: (i32, i32),
         facing_left: bool,
     ) -> Option<Attack> {
-        if self.game_over {
+        if self.game_over || (self.weapons.force_throw == Some(true) && self.hud.ammo == 0) {
             return None;
         }
+        let posture = if self.weapons.force_throw == Some(true) {
+            match posture {
+                AttackPosture::DashKick => AttackPosture::Standing,
+                AttackPosture::AirStab => {
+                    if self.mount == Some(crate::special::Mount::Surfboard) {
+                        AttackPosture::Surf
+                    } else {
+                        AttackPosture::Airborne
+                    }
+                }
+                other => other,
+            }
+        } else {
+            posture
+        };
         // `Player_ChooseAttack` (`$232CC`): a powered melee takes the
         // powered object; the stab and dash slash have only one.
         let powered = self.weapons.powered;
         let sword = match posture {
-            AttackPosture::Spread => {
+            AttackPosture::Spread if self.weapons.force_throw != Some(false) => {
                 self.fire_spread(player, facing_left);
                 return None;
             }
@@ -615,8 +630,12 @@ impl Combat {
             AttackPosture::Standing => Sword::Standing,
             AttackPosture::Crouching if powered => Sword::CrouchingPowered,
             AttackPosture::Crouching => Sword::Crouching,
-            AttackPosture::Airborne | AttackPosture::WallAir if powered => Sword::AirbornePowered,
-            AttackPosture::Airborne | AttackPosture::WallAir => Sword::Airborne,
+            AttackPosture::Airborne | AttackPosture::WallAir | AttackPosture::Spread if powered => {
+                Sword::AirbornePowered
+            }
+            AttackPosture::Airborne | AttackPosture::WallAir | AttackPosture::Spread => {
+                Sword::Airborne
+            }
             AttackPosture::AirStab if self.mount == Some(crate::special::Mount::Surfboard) => {
                 Sword::SurfStab
             }
@@ -664,7 +683,7 @@ impl Combat {
         // object 0 16 px ahead at 8 px/tick; $232B8 uses one shuriken.
         let mut rise = match posture {
             AttackPosture::Crouching => 26,
-            AttackPosture::Airborne | AttackPosture::WallAir => 51,
+            AttackPosture::Airborne | AttackPosture::WallAir | AttackPosture::Spread => 51,
             AttackPosture::Hang => 33,
             AttackPosture::Horse => 64,
             AttackPosture::Surf => 41,

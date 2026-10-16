@@ -111,7 +111,7 @@ impl Renderer {
     pub fn load(rom: &[u8]) -> Result<Self, String> {
         let tile_first = usize::from(word(rom, HUD_ART)?);
         let tile_count = usize::from(word(rom, HUD_ART + 2)?) + 1;
-        let (decoded, _) = musashi(rom, HUD_ART + 4, 65536)?;
+        let (decoded, _) = musashi(rom, crate::rom::regions::source(rom, HUD_ART) + 4, 65536)?;
         let tile_bytes = decoded.get(..tile_count * 32).ok_or("truncated HUD art")?;
         let tiles = tile_bytes
             .as_chunks::<32>()
@@ -160,14 +160,23 @@ impl Renderer {
         for (index, digit) in digits.iter_mut().enumerate() {
             digit.copy_from_slice(bytes(rom, DIGIT_TILES + index * 4, 3)?);
         }
-        let (lives_base, lives_width, lives_height) = header(rom, LIVES_BOX)?;
-        if (lives_width, lives_height) != (1, 1) {
-            return Err("HUD lives box is not 1x1".into());
-        }
-        let lives_boxes = [
-            lives_base.wrapping_add(word(rom, LIVES_BOX + 10)?),
-            lives_base.wrapping_add(word(rom, LIVES_BOX + 12)?),
-        ];
+        let lives_boxes = if crate::rom::regions::identify(rom)?
+            == crate::rom::regions::Region::Japan
+        {
+            // JP has the original single-digit lives box; the overseas
+            // revision added a separate nine-lives border table.
+            let border = word(rom, NINJUTSU_BOX + 4)?.wrapping_add(word(rom, NINJUTSU_BOX + 20)?);
+            [border; 2]
+        } else {
+            let (lives_base, lives_width, lives_height) = header(rom, LIVES_BOX)?;
+            if (lives_width, lives_height) != (1, 1) {
+                return Err("HUD lives box is not 1x1".into());
+            }
+            [
+                lives_base.wrapping_add(word(rom, LIVES_BOX + 10)?),
+                lives_base.wrapping_add(word(rom, LIVES_BOX + 12)?),
+            ]
+        };
 
         let mut base = [0; CELLS];
         draw_frame_table(rom, &mut base)?;

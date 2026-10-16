@@ -81,6 +81,7 @@ pub struct Pause {
     /// `Data_00B414` rows.
     names: Vec<Vec<u8>>,
     audio: Audio,
+    pointer_input: Input,
 }
 impl Pause {
     /// `ModeChange::Suspend` constructor for `Game_CheckPause`.
@@ -96,6 +97,7 @@ impl Pause {
             top: 3,
             names: Vec::new(),
             audio: Audio::default(),
+            pointer_input: Input::default(),
         };
         if let Some(game) = mode.game() {
             let rom = game.rom();
@@ -162,7 +164,8 @@ impl Pause {
     }
 }
 impl Mode for Pause {
-    fn tick(&mut self, input: Input) -> Option<ModeChange> {
+    fn tick(&mut self, mut input: Input) -> Option<ModeChange> {
+        input.pressed |= std::mem::take(&mut self.pointer_input).pressed;
         // Mode_Pause_Refresh ahead of every state (#94).
         if let Some(game) = held_game_mut(&mut self.saved) {
             game.refresh_paused();
@@ -253,6 +256,45 @@ impl Mode for Pause {
         let x = (crate::WIDTH as i32 - prompt.len() as i32 * 8) / 2;
         let y = (top + WINDOW_ROWS as i32 + 1) * 8 + hud_extra;
         font.draw_text(frame, x, y, prompt, style);
+    }
+    fn checkpoint_requested(&self) -> bool {
+        self.stage == Stage::Leaving(0)
+    }
+    fn menu_event(&mut self, event: crate::menu::MenuEvent) {
+        use crate::menu::MenuEvent;
+        let button = match (self.stage, event) {
+            (Stage::Menu, MenuEvent::Back) => Some(Button::Start),
+            (Stage::ConfirmQuit, MenuEvent::Back) => Some(Button::Attack),
+            (Stage::ConfirmQuit, MenuEvent::Click(x, _, _)) if (16..304).contains(&x) => {
+                Some(if x < 180 {
+                    Button::Jump
+                } else {
+                    Button::Attack
+                })
+            }
+            (Stage::Menu, MenuEvent::Click(x, y, alternate)) if (16..304).contains(&x) => {
+                let hud_extra = (crate::hud::PIXEL_HEIGHT - crate::hud::HEIGHT * 8) as i32;
+                let jitsu_y = (self.top + NAME_CELL.1 as i32) * 8 + hud_extra;
+                let quit_y = (self.top + WINDOW_ROWS as i32 + 1) * 8 + hud_extra;
+                if (jitsu_y..jitsu_y + 8).contains(&y) {
+                    Some(if x < 160 || alternate {
+                        Button::Left
+                    } else {
+                        Button::Right
+                    })
+                } else if (quit_y..quit_y + 8).contains(&y) {
+                    Some(Button::Attack)
+                } else if (self.top * 8..jitsu_y).contains(&y) {
+                    Some(Button::Start)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(button) = button {
+            self.pointer_input.pressed |= button.mask();
+        }
     }
     fn name(&self) -> &'static str {
         "Pause"

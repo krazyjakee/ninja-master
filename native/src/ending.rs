@@ -87,6 +87,8 @@ pub const FINAL_TICKS: u32 = 0x3c;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Page {
     pub lines: Vec<String>,
+    /// JP epilogue characters index the cartridge's 16 x 16 font.
+    pub glyphs: Option<Vec<Vec<u8>>>,
     /// Frames before the next page (`$FF00F8`).
     pub hold: u32,
 }
@@ -130,6 +132,7 @@ pub struct Ending {
     rolled: u32,
     rider_ticks: u32,
     speed: u32,
+    epilogue_rest: u32,
     audio: Audio,
     scene: Option<scene::Scene>,
     cliff: Option<cliff::Cliff>,
@@ -141,10 +144,22 @@ impl Ending {
         let rom = &front.rom;
         let pages = pages(rom);
         let roll = staff_roll(rom);
-        let speed = u32::from(word(rom, SCROLL_SPEED).unwrap_or(0x3000));
+        let japanese =
+            crate::rom::regions::identify(rom).ok() == Some(crate::rom::regions::Region::Japan);
+        let speed_at = if japanese {
+            0x100000 + 0x10d3e
+        } else {
+            SCROLL_SPEED
+        };
+        let speed = u32::from(word(rom, speed_at).unwrap_or(0x3000));
         let mut audio = Audio::default();
         audio.request(Table::Music.command(rom, PROLOGUE_MUSIC).ok());
         let cliff = cliff::Cliff::load(rom).ok();
+        let epilogue_rest = if japanese {
+            u32::from(word(rom, 0x100000 + 0x10d46).unwrap_or(464))
+        } else {
+            EPILOGUE_REST
+        };
         Self {
             front,
             pages,
@@ -156,6 +171,7 @@ impl Ending {
             rolled: 0,
             rider_ticks: 0,
             speed,
+            epilogue_rest,
             audio,
             scene: None,
             cliff,
@@ -195,6 +211,12 @@ impl Ending {
     }
 }
 impl Mode for Ending {
+    fn options(&self) -> Option<crate::options::GameOptions> {
+        Some(self.front.options)
+    }
+    fn set_options(&mut self, options: crate::options::GameOptions) {
+        self.front.options = options;
+    }
     fn tick(&mut self, input: Input) -> Option<ModeChange> {
         self.ticks += 1;
         let fade_period = match self.step {
@@ -233,7 +255,7 @@ impl Mode for Ending {
                 }
             }
             Step::EpilogueRest => {
-                if self.ticks >= EPILOGUE_REST {
+                if self.ticks >= self.epilogue_rest {
                     self.begin(Step::RollFadeOut);
                 }
             }
@@ -309,10 +331,33 @@ impl Mode for Ending {
         let style = Style::plain(md_color(WHITE), 1);
         if let Some(page) = self.page() {
             let scroll = (self.scroll >> 16) as i32;
-            for (row, line) in page.lines.iter().enumerate() {
-                let y = PAGE_TOP + row as i32 * PAGE_ROW_STEP - scroll;
-                if (SPLIT_LINE - 8..crate::HEIGHT as i32).contains(&y) {
-                    font.draw_text(frame, PAGE_LEFT, y, line, style);
+            if let Some(lines) = &page.glyphs {
+                for (row, glyphs) in lines.iter().enumerate() {
+                    let y = PAGE_TOP + row as i32 * PAGE_ROW_STEP - scroll;
+                    if (SPLIT_LINE - 16..crate::HEIGHT as i32).contains(&y) {
+                        for (col, &glyph) in glyphs.iter().enumerate() {
+                            let source = 0x100000 + 0x3abda + usize::from(glyph) * 32;
+                            for dy in 0..16 {
+                                let pixels = word(&self.front.rom, source + dy * 2).unwrap_or(0);
+                                for dx in 0..16 {
+                                    if pixels & (0x8000 >> dx) != 0 {
+                                        frame.pixel(
+                                            40 + col as i32 * 16 + dx,
+                                            y + dy as i32,
+                                            md_color(WHITE),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (row, line) in page.lines.iter().enumerate() {
+                    let y = PAGE_TOP + row as i32 * PAGE_ROW_STEP - scroll;
+                    if (SPLIT_LINE - 8..crate::HEIGHT as i32).contains(&y) {
+                        font.draw_text(frame, PAGE_LEFT, y, line, style);
+                    }
                 }
             }
             // Preserve the cliff above the original line-160 raster split.
@@ -345,6 +390,9 @@ impl Mode for Ending {
 /// `Data_01147A` expanded: `Func_01155E` draws `rows` rows of `width`
 /// characters from the text base plus the page offset.
 pub fn pages(rom: &[u8]) -> Vec<Page> {
+    if crate::rom::regions::identify(rom).ok() == Some(crate::rom::regions::Region::Japan) {
+        return japanese_pages(rom);
+    }
     let Ok(base) = pointer(rom, PAGES) else {
         return Vec::new();
     };
@@ -362,6 +410,7 @@ pub fn pages(rom: &[u8]) -> Vec<Page> {
             .collect();
         pages.push(Page {
             lines,
+            glyphs: None,
             hold: u32::from(hold),
         });
         at += 8;
@@ -393,4 +442,37 @@ pub fn staff_roll(rom: &[u8]) -> Vec<String> {
         }
     }
     lines
+}
+
+/// JP uses zero-terminated glyph rows and FE/FF page/end markers, rather
+/// than the overseas revision's ASCII page descriptor table.
+fn japanese_pages(rom: &[u8]) -> Vec<Page> {
+    let mut at = 0x100000 + 0x10d4a;
+    let hold = u32::from(word(rom, 0x100000 + 0x10d42).unwrap_or(720));
+    let mut pages = Vec::new();
+    let mut lines = Vec::new();
+    while let Some(&byte) = rom.get(at) {
+        if byte == 0xfe || byte == 0xff {
+            pages.push(Page {
+                lines: Vec::new(),
+                glyphs: Some(std::mem::take(&mut lines)),
+                hold,
+            });
+            if byte == 0xff {
+                break;
+            }
+            at += 2;
+            continue;
+        }
+        let start = at;
+        while rom.get(at).is_some_and(|&byte| byte != 0) {
+            at += 1;
+        }
+        if at == rom.len() || at - start > 20 || lines.len() >= 16 || pages.len() >= 16 {
+            break;
+        }
+        lines.push(rom[start..at].to_vec());
+        at += 1;
+    }
+    pages
 }

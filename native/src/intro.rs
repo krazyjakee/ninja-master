@@ -559,6 +559,12 @@ impl Intro {
 }
 
 impl Mode for Intro {
+    fn options(&self) -> Option<crate::options::GameOptions> {
+        Some(self.front.options)
+    }
+    fn set_options(&mut self, options: crate::options::GameOptions) {
+        self.front.options = options;
+    }
     fn tick(&mut self, input: Input) -> Option<ModeChange> {
         let frame = self.frame;
         self.frame += 1;

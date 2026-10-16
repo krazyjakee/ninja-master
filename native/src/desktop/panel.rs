@@ -212,6 +212,15 @@ impl Panel {
         info: &PanelInfo<'_>,
         actions: &mut Actions,
     ) {
+        let mut scheme = usize::from(settings.game.control.min(5));
+        if ui.combo_simple_string(
+            "Control scheme",
+            &mut scheme,
+            &ninja_master_native::options::CONTROL_SCHEMES,
+        ) {
+            settings.game.control = scheme as u8;
+        }
+        ui.text_wrapped("Classic combines melee and shurikens by proximity. Six-button and Dedicated provide independent guard, melee and shuriken actions.");
         let mut names = vec!["All connected controllers".to_string()];
         names.extend(info.controllers.iter().cloned());
         if !settings.controller.is_empty() && !info.controllers.contains(&settings.controller) {
@@ -233,10 +242,8 @@ impl Panel {
             };
         }
         ui.text_disabled("Left stick mirrors the D-pad. Click a binding to replace it.");
-        if let Some((_, _, label)) = info
-            .capture
-            .and_then(|(button, _)| settings::PAD_CONTROLS.iter().find(|(b, _, _)| *b == button))
-        {
+        if let Some((button, _)) = info.capture {
+            let label = settings::control_label(button, settings.game.control);
             ui.text_colored(
                 [0.92, 0.43, 0.47, 1.0],
                 format!("Bind {label}: press an input. Esc cancels; Backspace unbinds."),
@@ -249,8 +256,8 @@ impl Panel {
         ui.next_column();
         ui.text("Controller");
         ui.next_column();
-        for (button, _, label) in settings::PAD_CONTROLS {
-            ui.text(label);
+        for (button, _, _) in settings::PAD_CONTROLS {
+            ui.text(settings::control_label(button, settings.game.control));
             ui.next_column();
             for (device, bindings) in [
                 (Device::Keyboard, &settings.keyboard),
@@ -276,7 +283,8 @@ impl Panel {
         ui.separator();
         ui.text("Input tester");
         ui.columns(4, "Live inputs", false);
-        for (button, _, label) in settings::PAD_CONTROLS {
+        for (button, _, _) in settings::PAD_CONTROLS {
+            let label = settings::control_label(button, settings.game.control);
             let down = info.held & button.mask() != 0;
             ui.text_colored(
                 if down {

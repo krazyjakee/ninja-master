@@ -304,12 +304,12 @@ fn run() -> Result<(), String> {
                     }
                 } else {
                     return Err(format!(
-                        "{error}\nSupply a US ROM with --rom FILE or NINJA_MASTER_ROM."
+                        "{error}\nSupply a supported US, EU or JP ROM with --rom FILE or NINJA_MASTER_ROM."
                     ));
                 }
                 #[cfg(not(feature = "desktop"))]
                 return Err(format!(
-                    "{error}\nSupply a US ROM with --rom FILE or NINJA_MASTER_ROM."
+                    "{error}\nSupply a supported US, EU or JP ROM with --rom FILE or NINJA_MASTER_ROM."
                 ));
             }
         }
