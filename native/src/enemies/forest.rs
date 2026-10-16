@@ -1,8 +1,6 @@
 //! Round 1 forest types behind the handler interface: `$14` ninja
 //! (`$1490C`), `$24` komuso patrol (`$15CEE`), `$44` hopper (`$1699C`) and the
-//! `$B4`/`$B8` samurai (`$1BB1C`/`$1C5F0`). Sequences, timers and sources are
-//! These handlers keep the state-enum model of issue #25 and step their own
-//! motion (`integrates` is false).
+//! `$B4`/`$B8` samurai (`$1BB1C`/`$1C5F0`). Each handler integrates its own motion.
 use super::{
     Behavior, Ctx, HitResponse, Offsets, Roster, aim, frame_at, frame_list, set_fraction,
     shot_damage,
@@ -20,6 +18,8 @@ use crate::{
 use std::{collections::BTreeSet, sync::Arc};
 
 pub(crate) mod props;
+mod rules;
+pub(crate) use rules::Rules;
 
 pub(crate) const KINDS: &[u16] = &[0x14, 0x24, 0x44, 0xb4, 0xb8];
 
@@ -53,206 +53,6 @@ fn samurai_health_palette(cx: &mut Ctx, enemy: &Enemy) {
 fn samurai_flash(cx: &mut Ctx) {
     let white = cx.shared.flash_color;
     cx.palette_op(PaletteOp::FillFirst(1, 8, white));
-}
-
-/// `$1BA50` frame lists of the `$B4`/`$B8` handlers (mapping table `$1BA1E`).
-fn heavy_frames(rom: &[u8], p: usize) -> Result<Vec<(u8, u16)>> {
-    frame_list(rom, p, 0x1ba1e)
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct Rules {
-    // Type $14, handler $1490C.
-    pub(crate) ninja_body: [u16; 3],
-    pub(crate) ninja_throw: [u16; 4],
-    pub(crate) ninja_rest: u16,
-    pub(crate) ninja_death: u16,
-    pub(crate) ninja_range: i32,
-    pub(crate) ninja_wait: u16,
-    pub(crate) ninja_wait_round6: u16,
-    pub(crate) ninja_windup: u16,
-    pub(crate) ninja_follow: u16,
-    pub(crate) ninja_rest_ticks: u16,
-    pub(crate) ninja_pause: u16,
-    pub(crate) ninja_gravity: i32,
-    pub(crate) ninja_jump: [i32; 3],
-    pub(crate) ninja_drop: i32,
-    pub(crate) ninja_leaves: u16,
-    pub(crate) ninja_leaf_mask: u64,
-    pub(crate) ninja_fall: Launch,
-    pub(crate) star_speed: i32,
-    pub(crate) star_offset: Offsets,
-    // Type $24, handler $15CEE.
-    pub(crate) patrol: [u16; 6],
-    pub(crate) patrol_hit: u16,
-    pub(crate) patrol_step: i32,
-    pub(crate) patrol_cadence: u64,
-    pub(crate) patrol_period: u64,
-    pub(crate) patrol_windup: u16,
-    pub(crate) patrol_recover: u16,
-    pub(crate) patrol_knock: Launch,
-    pub(crate) knife_speed: i32,
-    pub(crate) knife_offset: [(i32, i32); 2],
-    pub(crate) knife_damage: u8,
-    // Type $44, handler $1699C.
-    pub(crate) hopper: [u16; 6],
-    pub(crate) hopper_range: i32,
-    pub(crate) hopper_leaves: u16,
-    pub(crate) hopper_leaf_mask: u64,
-    pub(crate) hopper_drop: i32,
-    pub(crate) hopper_drop_gravity: i32,
-    pub(crate) hopper_apex: i32,
-    pub(crate) hopper_early: u16,
-    pub(crate) hopper_crouch: u16,
-    pub(crate) hopper_probe: i32,
-    pub(crate) hopper_home: (i32, i32),
-    pub(crate) hopper_leap: i32,
-    pub(crate) hopper_leave: i32,
-    pub(crate) hopper_gravity: i32,
-    pub(crate) hopper_gravity_mask: u16,
-    pub(crate) hopper_run: i32,
-    pub(crate) hopper_recover: u16,
-    // Types $B4/$B8, handlers $1BB1C/$1C5F0.
-    pub(crate) heavy_idle: u16,
-    pub(crate) heavy_walk: Vec<(u8, u16)>,
-    pub(crate) heavy_attack: Vec<(u8, u16)>,
-    pub(crate) heavy_release: u8,
-    pub(crate) heavy_death: Vec<(u8, u16)>,
-    pub(crate) heavy_hurt_mapping: u16,
-    pub(crate) heavy_idle_ticks: u16,
-    pub(crate) heavy_charge_ticks: u16,
-    pub(crate) heavy_hold: u16,
-    pub(crate) heavy_hurt: u16,
-    pub(crate) heavy_flash: u16,
-    pub(crate) heavy_death_flash: u16,
-    pub(crate) heavy_slide: i32,
-    pub(crate) heavy_after: [u16; 2],
-    pub(crate) heavy_walk_speed: i32,
-    pub(crate) heavy_bounds: (i32, i32),
-    pub(crate) sickle: u16,
-    pub(crate) sickle_speed: i32,
-    pub(crate) sickle_offset: (i32, i32),
-    pub(crate) sickle_damage: u8,
-    pub(crate) leader_sickle_speed: i32,
-    pub(crate) leader_sickle_accel: i32,
-    pub(crate) leader_sickle_life: u16,
-    pub(crate) leader_sickle_offset: i32,
-    /// `$1C658`: the `$B8` starts at camera X + `$1C0`.
-    pub(crate) leader_offset: i32,
-    /// `$1C698`: it walks the player in (`plr_event` 3) until he is past
-    /// its X - `$100`.
-    pub(crate) leader_approach: i32,
-    /// `$1C6E2`: the entrance ends once its screen X (+128) is below `$1AC`.
-    pub(crate) leader_entered: i32,
-}
-impl Rules {
-    pub(crate) fn load(rom: &[u8]) -> Result<Self> {
-        let heavy_attack = heavy_frames(rom, 0x1bda2)?;
-        Ok(Self {
-            ninja_body: words(rom, 0x14dba)?,
-            ninja_throw: words(rom, 0x148b6)?,
-            ninja_rest: word(rom, 0x148be)?,
-            ninja_death: word(rom, 0x148c2)?,
-            ninja_range: i32::from(word(rom, 0x149e8)?),
-            ninja_wait: word(rom, 0x14b32)?,
-            ninja_wait_round6: word(rom, 0x14b42)?,
-            ninja_windup: word(rom, 0x14c28)?,
-            ninja_follow: word(rom, 0x14ca2)?,
-            ninja_rest_ticks: word(rom, 0x14cce)?,
-            ninja_pause: word(rom, 0x14d08)?,
-            ninja_gravity: i32::from(word(rom, 0x14aa4)?),
-            ninja_jump: [
-                long(rom, 0x14bc6)?,
-                long(rom, 0x14bd8)?,
-                long(rom, 0x14be4)?,
-            ],
-            ninja_drop: long(rom, 0x14a84)?,
-            ninja_leaves: word(rom, 0x14a5c)?,
-            ninja_leaf_mask: u64::from(word(rom, 0x14a68)?),
-            ninja_fall: Launch::read(rom, 0x14d5a, 0x14d62, 0x14d68)?,
-            star_speed: signed(rom, 0x14c54)? << 4,
-            star_offset: Offsets::read(rom, 0x1d1ce)?,
-            patrol: words(rom, 0x15c9e)?,
-            patrol_hit: word(rom, 0x15cb0)?,
-            patrol_step: signed(rom, 0x15cac)? << 4,
-            patrol_cadence: u64::from(word(rom, 0x15d74)?),
-            patrol_period: u64::from(word(rom, 0x15d5a)?),
-            patrol_windup: word(rom, 0x15df2)?,
-            patrol_recover: word(rom, 0x15e14)?,
-            patrol_knock: Launch::read(rom, 0x15ea6, 0x15eae, 0x15ebc)?,
-            knife_speed: long(rom, 0x15fc6)?,
-            knife_offset: [
-                (
-                    i32::from(byte(rom, 0x15f6c)? as i8),
-                    i32::from(byte(rom, 0x15f6d)? as i8),
-                ),
-                (
-                    i32::from(byte(rom, 0x15f6e)? as i8),
-                    i32::from(byte(rom, 0x15f6f)? as i8),
-                ),
-            ],
-            knife_damage: shot_damage(rom, 39)?,
-            hopper: words(rom, 0x16958)?,
-            hopper_range: i32::from(word(rom, 0x169d8)?),
-            hopper_leaves: word(rom, 0x169e2)?,
-            hopper_leaf_mask: u64::from(word(rom, 0x169ec)?),
-            hopper_drop: signed(rom, 0x16a26)? << 16,
-            hopper_drop_gravity: i32::from(word(rom, 0x16a20)?),
-            hopper_apex: long(rom, 0x16a48)?,
-            hopper_early: word(rom, 0x16a6a)?,
-            hopper_crouch: word(rom, 0x16aa2)?,
-            hopper_probe: signed(rom, 0x16a82)?,
-            hopper_home: (
-                i32::from(word(rom, 0x16ab6)?),
-                i32::from(word(rom, 0x16ac8)?),
-            ),
-            hopper_leap: long(rom, 0x16bee)?,
-            hopper_leave: long(rom, 0x16b7a)?,
-            hopper_gravity: i32::from(word(rom, 0x16bf6)?),
-            hopper_gravity_mask: word(rom, 0x16c28)?,
-            hopper_run: long(rom, 0x16bfc)?,
-            hopper_recover: word(rom, 0x16b5c)?,
-            heavy_idle: word(rom, 0x1ba1e + usize::from(byte(rom, 0x1bd11)?))?,
-            heavy_walk: heavy_frames(rom, 0x1bd14)?,
-            heavy_release: byte(rom, 0x1bd8f)? & 0x7f,
-            heavy_attack,
-            heavy_death: heavy_frames(rom, 0x1beb8)?,
-            heavy_hurt_mapping: word(rom, 0x1ba1e + usize::from(byte(rom, 0x1be69)?))?,
-            heavy_idle_ticks: word(rom, 0x1bc0c)?,
-            heavy_charge_ticks: word(rom, 0x1bc30)?,
-            heavy_hold: word(rom, 0x1bde8)?,
-            heavy_hurt: word(rom, 0x1be4a)?,
-            heavy_flash: word(rom, 0x1be5a)? - word(rom, 0x1be9c)?,
-            heavy_death_flash: word(rom, 0x1bf20)? - word(rom, 0x1bfae)?,
-            heavy_slide: long(rom, 0x1bf3c)?,
-            heavy_after: [word(rom, 0x1bfda)?, word(rom, 0x1bff0)?],
-            heavy_walk_speed: long(rom, 0x1bcd0)?,
-            heavy_bounds: (
-                i32::from(word(rom, 0x1bcf2)?),
-                i32::from(word(rom, 0x1bcd8)?),
-            ),
-            sickle: word(rom, 0x1ba1e + usize::from(byte(rom, 0x1c1c9)?))?,
-            sickle_speed: long(rom, 0x1c110)?,
-            sickle_offset: (signed(rom, 0x1c0e6)?, signed(rom, 0x1c118)?),
-            sickle_damage: shot_damage(rom, 50)?,
-            leader_sickle_speed: long(rom, 0x1c160)?,
-            leader_sickle_accel: word_i(rom, 0x1c16c)?,
-            leader_sickle_life: word(rom, 0x1c176)?,
-            leader_sickle_offset: signed(rom, 0x1c14e)?,
-            leader_offset: word_i(rom, 0x1c65a)?,
-            leader_approach: word_i(rom, 0x1c69a)?,
-            leader_entered: word_i(rom, 0x1c6e4)?,
-        })
-    }
-    /// Every mapping a forest enemy or its projectile can select.
-    pub(crate) fn idle(&self, kind: u16) -> u16 {
-        match kind {
-            0x14 => self.ninja_body[2],
-            0x24 => self.patrol[0],
-            0x44 => self.hopper[0],
-            _ => self.heavy_idle,
-        }
-    }
 }
 
 /// The five forest handlers, sharing one set of recovered tables.
