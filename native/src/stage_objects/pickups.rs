@@ -70,6 +70,9 @@ impl StageObjects {
     /// Items that other objects schedule (`$361D2`), from list 5.
     pub fn drop_pickups(&mut self, drops: impl IntoIterator<Item = Drop>) {
         for drop in drops {
+            if self.shurikens_disabled && drop.kind <= SHURIKEN_20 {
+                continue;
+            }
             if self.pickups.len() >= LIST7_CAPACITY {
                 break;
             }
@@ -89,6 +92,7 @@ impl StageObjects {
     ) -> impl Iterator<Item = (u16, i32, i32)> + '_ {
         drops
             .into_iter()
+            .filter(|drop| !self.shurikens_disabled || drop.kind > SHURIKEN_20)
             .take(LIST7_CAPACITY.saturating_sub(self.pickups.len()))
             // Keep even the widest item's artwork outside the 320px view
             // when allocation is delayed (for example, after a camera jump).
@@ -155,7 +159,9 @@ impl StageObjects {
             // four fragments.
             self.bombs.push(Bomb::new(x, y + 8, object.priority));
             push_debris(&mut self.debris, x, y);
-        } else if self.pickups.len() < LIST7_CAPACITY {
+        } else if self.pickups.len() < LIST7_CAPACITY
+            && (!self.shurikens_disabled || kind > SHURIKEN_20)
+        {
             // $35DB0: the item appears where the box was, at routine 0.
             let pickup = self.new_pickup(kind, x, y, object.priority);
             self.pickups.push(pickup);
@@ -373,5 +379,63 @@ impl StageObjects {
         for value in points {
             hud.score = hud.score.saturating_add(u32::from(value));
         }
+    }
+}
+
+#[cfg(test)]
+mod roadmap_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires a user-supplied cartridge"]
+    fn disabled_removes_container_and_enemy_ammo_but_keeps_other_items() {
+        let directory = std::env::var_os("NINJA_MASTER_TEST_ROMS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../rom"));
+        let rom =
+            crate::rom::regions::prepare(std::fs::read(directory.join("shinobi3_us.bin")).unwrap())
+                .unwrap();
+        let id = crate::stage::StageId::FOREST;
+        let combat = Combat::load_stage(&rom, id).unwrap();
+        let mut objects = StageObjects::load(&rom, id).unwrap();
+        objects.shurikens_disabled = true;
+        objects.drop_pickups((0..7).map(|kind| Drop {
+            kind,
+            x: 100,
+            y: 496,
+            vx: 0,
+            high_priority: false,
+        }));
+        assert_eq!(
+            objects
+                .pickups
+                .iter()
+                .map(|pickup| pickup.kind)
+                .collect::<Vec<_>>(),
+            [2, 3, 4, 5, 6]
+        );
+        objects.pickups.clear();
+        for kind in 0..8 {
+            let record = Record {
+                source: 0,
+                kind: 8,
+                x: 100,
+                y: 496,
+                param: kind,
+                x_window: (0, 0),
+                y_window: (0, 0),
+            };
+            let mut object = Object::new(0, &record, 0, 0, &combat);
+            object.param = kind;
+            objects.break_box(&object);
+        }
+        assert_eq!(
+            objects
+                .pickups
+                .iter()
+                .map(|pickup| pickup.kind)
+                .collect::<Vec<_>>(),
+            [2, 3, 4, 5, 6]
+        );
+        assert_eq!(objects.bombs.len(), 1);
     }
 }

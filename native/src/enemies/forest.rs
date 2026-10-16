@@ -269,6 +269,15 @@ impl Forest {
                     cx.palette_op(PaletteOp::Words(1, 1, death));
                 }
                 let big = usize::from(spawn.kind == 0xb8);
+                // Stop inside the opening at the broken rock pile's ROM X.
+                // The old camera+$160 target lay past the doorway's floor.
+                let props = &cx.shared.leader_props;
+                let doorway_x = props
+                    .boulders
+                    .iter()
+                    .map(|&(dx, _, _)| props.boulder_x + dx)
+                    .max()
+                    .unwrap_or(cx.camera.0 + crate::WIDTH as i32);
                 if enemy.phase == 0 {
                     match frame_at(&rules.heavy_death, enemy.counter) {
                         Some((_, mapping, _)) => {
@@ -296,12 +305,12 @@ impl Forest {
                         if big == 0 {
                             Ctx::remove(enemy);
                         } else {
-                            // `$1C018`: the 1-1 leader keeps code 3 asserted
-                            // until Joe walks beyond camera X + $160.
+                            // Walk through the broken opening after the
+                            // original 120-tick clear jingle.
                             enemy.phase = 2;
                         }
                     }
-                } else if cx.player.0 <= cx.camera.0 + 0x160 {
+                } else if cx.player.0 < (cx.camera.0 + 0x160).min(doorway_x) {
                     cx.player_event(PlayerEvent::WalkRight);
                 } else {
                     cx.next_substage();

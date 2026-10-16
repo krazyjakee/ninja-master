@@ -88,6 +88,7 @@ pub struct Values {
     pub score_display: u32,
     /// `Game_Options` bit 7.
     pub infinite_shurikens: bool,
+    pub shurikens_disabled: bool,
 }
 
 /// ROM-backed HUD art plus the immutable part of the window name table.
@@ -216,7 +217,14 @@ impl Renderer {
         } else {
             values.ammo.min(999)
         };
-        self.draw_ammo(&mut cells, ammo);
+        if values.shurikens_disabled {
+            for row in 0..HEIGHT {
+                cells[row * WIDTH + 18..row * WIDTH + 25]
+                    .copy_from_slice(&self.border[row * WIDTH + 18..row * WIDTH + 25]);
+            }
+        } else {
+            self.draw_ammo(&mut cells, ammo);
+        }
         self.draw_digit(&mut cells, 28, usize::from(values.ninjutsu_uses.min(9)));
         // Hud_DrawScore always leaves five leading cells blank at zero and
         // draws the final two digits; nonzero leading zeroes remain untouched.

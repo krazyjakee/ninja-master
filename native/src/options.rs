@@ -68,6 +68,8 @@ const INVINCIBLE_SEQUENCE: usize = 0x8daa;
 const INVINCIBLE_LENGTH: usize = 5;
 /// `Hud_DrawAmmo` shows 999 for infinite shurikens.
 pub const INFINITE_AMMO: u16 = 999;
+/// Native option following the eight original ammunition counts.
+pub const DISABLED_SHURIKENS: u8 = 8;
 
 /// The tables are at fixed addresses; a short image reads zeros.
 fn byte(rom: &[u8], at: usize) -> u8 {
@@ -81,7 +83,7 @@ fn byte(rom: &[u8], at: usize) -> u8 {
 pub struct GameOptions {
     /// 0 NORMAL, 1 EASY, 2 HARD, 3 EXPERT.
     pub level: u8,
-    /// Index into `Shuriken_Counts`.
+    /// Index into `Shuriken_Counts`, or `DISABLED_SHURIKENS` for a melee-only run.
     pub shurikens: u8,
     /// `Game_Options` bit 7: throws cost nothing.
     pub infinite: bool,
@@ -92,6 +94,9 @@ pub struct GameOptions {
     pub invincible: bool,
 }
 impl GameOptions {
+    pub fn shurikens_disabled(&self) -> bool {
+        self.shurikens == DISABLED_SHURIKENS
+    }
     /// `Game_InitLives`: spare lives and maximum health.
     pub fn lives_health(&self, rom: &[u8]) -> (u8, u8) {
         let at = LEVEL_LIVES_HEALTH + usize::from(self.level & 3) * 2;
@@ -99,7 +104,9 @@ impl GameOptions {
     }
     /// `Game_InitAmmo`: the starting (and respawn) shuriken count.
     pub fn start_ammo(&self, rom: &[u8]) -> u16 {
-        if self.infinite {
+        if self.shurikens_disabled() {
+            0
+        } else if self.infinite {
             INFINITE_AMMO
         } else {
             u16::from(byte(rom, SHURIKEN_COUNTS + usize::from(self.shurikens & 7)))
@@ -244,6 +251,8 @@ pub struct OptionsScreen {
     /// `$FF00F8`, `$FF00FA`, `$FF00FC`: sound test selections (1 on entry).
     pub music: u16,
     pub effect: u16,
+    /// Driver effects absent from the original sound-test record table.
+    extra_effects: Vec<u8>,
     pub voice: u16,
     /// `$FF0100`: frames a direction has been held.
     repeat: u16,
@@ -266,9 +275,20 @@ impl OptionsScreen {
             art.vdp.cram = art.target;
             art
         });
+        // The original list omits two real driver effects ($AB and $D7 in
+        // every retail ROM). Append commands absent from all 66 records;
+        // keep their identities numeric because the ROM supplies no names.
+        let extra_effects = (0x9d..=0xd8)
+            .filter(|command| {
+                !(0..EFFECT_COUNT).any(|index| {
+                    byte(&screen.front.rom, EFFECT_TABLE + index as usize * 16) == *command
+                })
+            })
+            .collect();
         Self {
             art,
             screen,
+            extra_effects,
             cursor: 0,
             viewport: Menu::new(48, 6, 22),
             pointer_input: Input::default(),
@@ -314,7 +334,9 @@ impl OptionsScreen {
             if value >= count {
                 value = 0;
             }
-            if byte(self.rom(), table + value as usize * 16 + 1) == 0 {
+            if (table == EFFECT_TABLE && value >= EFFECT_COUNT)
+                || byte(self.rom(), table + value as usize * 16 + 1) == 0
+            {
                 break;
             }
         }
@@ -347,7 +369,7 @@ impl OptionsScreen {
             }
             SHURIKINS => {
                 let count = byte(&rom, SHURIKEN_COUNTS + usize::from(options.shurikens & 7));
-                if delta == 0 && count == 0 {
+                if delta == 0 && count == 0 && !options.shurikens_disabled() {
                     self.secret = self.secret.saturating_add(1);
                     if self.secret == SECRET_TICKS {
                         if self.effect == SECRET_EFFECT {
@@ -365,7 +387,7 @@ impl OptionsScreen {
                     self.secret = 0;
                 }
                 let options = &mut self.screen.front.options;
-                options.shurikens = (i32::from(options.shurikens) + delta).rem_euclid(8) as u8;
+                options.shurikens = (i32::from(options.shurikens) + delta).rem_euclid(9) as u8;
             }
             CONTROL => {
                 options.control = (i32::from(options.control) + delta).rem_euclid(6) as u8;
@@ -385,14 +407,18 @@ impl OptionsScreen {
             }
             SE => {
                 if input.pressed(Button::Attack) {
-                    self.screen
-                        .audio
-                        .request(Table::Effect.command(&rom, self.effect as u8).ok());
+                    let command = self.effect_command();
+                    self.screen.audio.request(command);
                 } else if input.pressed(Button::Jump) {
                     self.screen.audio.push(STOP_EFFECTS);
                 }
                 let step = self.repeat_x(input);
-                self.effect = self.step_sound(EFFECT_TABLE, EFFECT_COUNT, self.effect, step);
+                self.effect = self.step_sound(
+                    EFFECT_TABLE,
+                    EFFECT_COUNT + self.extra_effects.len() as i32,
+                    self.effect,
+                    step,
+                );
             }
             VOICE => {
                 if input.pressed(Button::Attack) {
@@ -450,8 +476,23 @@ impl OptionsScreen {
             .map(|b| String::from_utf8_lossy(b).into_owned())
             .unwrap_or_default()
     }
+    fn effect_command(&self) -> Option<u8> {
+        if self.effect < EFFECT_COUNT as u16 {
+            Table::Effect.command(self.rom(), self.effect as u8).ok()
+        } else {
+            self.extra_effects
+                .get(usize::from(self.effect) - EFFECT_COUNT as usize)
+                .copied()
+        }
+    }
     /// A sound test record's name (`loc_008F96`: 14 characters).
     fn sound_name(&self, table: usize, index: u16) -> String {
+        if table == EFFECT_TABLE && index >= EFFECT_COUNT as u16 {
+            return self
+                .extra_effects
+                .get(usize::from(index) - EFFECT_COUNT as usize)
+                .map_or_else(String::new, |command| format!("SFX ${command:02X}"));
+        }
         self.text(table + usize::from(index) * 16 + 2, 14)
     }
 }
@@ -490,7 +531,9 @@ impl Mode for OptionsScreen {
             crate::text::Style::plain([255, 210, 100], 1),
         );
         let options = self.options();
-        let ammo = if options.infinite {
+        let ammo = if options.shurikens_disabled() {
+            "DISABLE".into()
+        } else if options.infinite {
             "INFINITE".into()
         } else {
             options.start_ammo(self.rom()).to_string()
@@ -638,5 +681,60 @@ mod control_tests {
         assert!(remap(&[], 4, press(Button::Y)).pressed(Button::Attack));
         assert!(remap(&[], 5, press(Button::Ninjutsu)).pressed(Button::Ninjutsu));
         assert!(remap(&[], 0, press(Button::Attack)).held(Button::Attack));
+    }
+}
+
+#[cfg(test)]
+mod sound_list_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires the three user-supplied cartridges"]
+    fn sound_test_adds_both_unlisted_driver_effects_without_retriggering() {
+        let directory = std::env::var_os("NINJA_MASTER_TEST_ROMS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../rom"));
+        for region in ["us", "eu", "jp"] {
+            let rom = crate::rom::regions::prepare(
+                std::fs::read(directory.join(format!("shinobi3_{region}.bin"))).unwrap(),
+            )
+            .unwrap();
+            let mut options = OptionsScreen::new(Front::load(&rom).unwrap());
+            for _ in 0..100 {
+                options.tick(Input::default());
+            }
+            options.take_audio();
+            assert_eq!(options.extra_effects, [0xab, 0xd7]);
+            options.cursor = SE;
+            options.effect = 65;
+            for command in [0xab, 0xd7] {
+                options.tick(crate::input::press(Button::Right));
+                assert_eq!(options.effect_command(), Some(command));
+                options.tick(crate::input::press(Button::Attack));
+                assert_eq!(options.take_audio().commands, [command]);
+                options.tick(Input {
+                    held: Button::Attack.mask(),
+                    pressed: 0,
+                });
+                assert!(options.take_audio().commands.is_empty());
+                let mut player = crate::sound::SoundPlayer::new(&rom, 48000).unwrap();
+                player.play_command(command);
+                let mut samples = [0; 1600];
+                let mut audible = false;
+                for _ in 0..120 {
+                    player.render(&mut samples).unwrap();
+                    audible |= samples.iter().any(|&sample| sample != 0);
+                }
+                assert!(audible, "{region}: ${command:02x}");
+            }
+            options.tick(crate::input::press(Button::Right));
+            assert_eq!(options.effect, 0);
+            options.effect = 66;
+            options.menu_event(MenuEvent::Click(80, 145, false));
+            options.tick(Input::default());
+            assert_eq!(options.take_audio().commands, [0xab]);
+            options.menu_event(MenuEvent::Click(80, 145, true));
+            options.tick(Input::default());
+            assert_eq!(options.take_audio().commands, [STOP_EFFECTS]);
+        }
     }
 }

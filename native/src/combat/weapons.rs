@@ -357,6 +357,8 @@ pub struct PlayerWeapons {
     pub dash_slashing: bool,
     /// Down held: extends `Player_MeasureEnemy`'s vertical target window.
     pub crouching: bool,
+    /// Proximity sampled before the state handler changes facing.
+    pub(crate) proximity: Option<i32>,
     /// Player `obj_tile` bit 15, used by `Player_MeasureEnemy` (`$22876`).
     pub high_priority: bool,
     /// `plr_ctrl` bit 5 and the player's Y velocity (256 units per pixel)
@@ -426,6 +428,7 @@ impl PlayerWeapons {
             guarding: false,
             dash_slashing: false,
             crouching: false,
+            proximity: None,
             high_priority: false,
             airborne: false,
             velocity_y: 0,
@@ -597,6 +600,11 @@ impl Combat {
             })
             .collect();
     }
+    /// `$1FD68`: sample with the previous pose/facing, before the state
+    /// handler can turn Joe or move him. The selected attack then stays fixed.
+    pub(crate) fn sample_attack_proximity(&mut self, player: (i32, i32), facing_left: bool) {
+        self.weapons.proximity = Some(self.find_nearest_enemy(player, facing_left));
+    }
     /// Button B accepted by `$22F7E` in `posture`. Returns the melee or throw
     /// choice, or `None` for the spread, which keeps state 17.
     pub fn start_player_attack(
@@ -605,7 +613,10 @@ impl Combat {
         player: (i32, i32),
         facing_left: bool,
     ) -> Option<Attack> {
-        if self.game_over || (self.weapons.force_throw == Some(true) && self.hud.ammo == 0) {
+        if self.game_over
+            || (self.weapons.force_throw == Some(true)
+                && (self.shurikens_disabled || (!self.infinite_shurikens && self.hud.ammo == 0)))
+        {
             return None;
         }
         let posture = if self.weapons.force_throw == Some(true) {
@@ -627,7 +638,9 @@ impl Combat {
         // powered object; the stab and dash slash have only one.
         let powered = self.weapons.powered;
         let sword = match posture {
-            AttackPosture::Spread if self.weapons.force_throw != Some(false) => {
+            AttackPosture::Spread
+                if self.weapons.force_throw != Some(false) && !self.shurikens_disabled =>
+            {
                 self.fire_spread(player, facing_left);
                 return None;
             }
@@ -656,10 +669,16 @@ impl Combat {
         // $23292: melee below 64 px, otherwise a throw while shurikens remain.
         // The stab ($2306C) and dash kick ($23280) never throw.
         let melee = matches!(sword, Sword::AirStab | Sword::SurfStab | Sword::DashKick)
-            || self.hud.ammo == 0
+            || self.shurikens_disabled
+            || (!self.infinite_shurikens && self.hud.ammo == 0)
             || match self.weapons.force_throw {
                 Some(throw) => !throw,
-                None => self.find_nearest_enemy(player, facing_left) < 64,
+                None => {
+                    self.weapons
+                        .proximity
+                        .unwrap_or_else(|| self.find_nearest_enemy(player, facing_left))
+                        < 64
+                }
             };
         let full = self.free_attack_slots() == 0;
         if melee {
@@ -700,7 +719,9 @@ impl Combat {
         }
         // $232B8 takes the shuriken before `Player_StartThrow` allocates the
         // object; with list 3 full ($232E2) it is lost and nothing changes.
-        self.hud.ammo -= 1;
+        if !self.infinite_shurikens {
+            self.hud.ammo -= 1;
+        }
         if full {
             return None;
         }
@@ -855,46 +876,29 @@ impl Combat {
             *nearest = distance;
         }
     }
-    /// `$2319E..$23270`: the first B of a somersault needs a shuriken, plays
-    /// effect 4 (`$B2`) and creates eight object-1 shurikens while list 3
-    /// has room. Ammo is checked once: each star subtracts one and
-    /// `$23270` clamps a negative count to zero, so 1-7 shurikens still
-    /// throw eight.
+    /// Native refinement of `$2319E..$23270`: every allocated star costs
+    /// one shuriken. The original's first burst overdraws a stock of 1..7;
+    /// both first and subsequent bursts now stop at the available stock.
     fn fire_spread(&mut self, player: (i32, i32), facing_left: bool) {
-        if self.hud.ammo == 0 {
+        if self.shurikens_disabled {
             return;
         }
-        if self.weapons.spread_fired {
-            self.fire_more_spread(player, facing_left);
-            return;
-        }
-        self.weapons.spread_fired = true;
-        let throw = self.rules.cues.get(SoundEvent::SpreadThrow);
-        self.weapons.sounds.push(throw);
-        let mut ammo = i32::from(self.hud.ammo);
+        let mut fired = 0;
         for index in 0..8 {
-            if self.free_attack_slots() == 0 {
+            if (!self.infinite_shurikens && self.hud.ammo == 0) || self.free_attack_slots() == 0 {
                 break;
             }
-            ammo -= 1;
+            if !self.infinite_shurikens {
+                self.hud.ammo -= 1;
+            }
             self.spawn_spread_shot(index, player, facing_left);
+            fired += 1;
         }
-        self.hud.ammo = ammo.max(0) as u16;
-    }
-    /// `$231F8..$2326C`: a later B in the same somersault (`plr_ctrl` bit
-    /// 13) starts again at direction 0 and adds stars while a shuriken and
-    /// a list-3 record remain, playing effect 4 after the first.
-    fn fire_more_spread(&mut self, player: (i32, i32), facing_left: bool) {
-        for index in 0..8 {
-            if self.hud.ammo == 0 || self.free_attack_slots() == 0 {
-                break;
-            }
-            self.hud.ammo -= 1;
-            self.spawn_spread_shot(index, player, facing_left);
-            if index == 0 {
-                let throw = self.rules.cues.get(SoundEvent::SpreadThrow);
-                self.weapons.sounds.push(throw);
-            }
+        if fired > 0 {
+            self.weapons.spread_fired = true;
+            self.weapons
+                .sounds
+                .push(self.rules.cues.get(SoundEvent::SpreadThrow));
         }
     }
     /// `SpreadShuriken_Init` (`$24EB2`) for direction `index` (`+$28`).
@@ -985,3 +989,6 @@ impl Combat {
         event
     }
 }
+
+#[cfg(test)]
+mod roadmap_tests;

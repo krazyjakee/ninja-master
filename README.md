@@ -99,7 +99,11 @@ Default controls follow the Mega Drive three-button layout:
 - **Quit during play:** pause, then press Attack followed by Jump.
 
 The title's **OPTIONS** menu adjusts difficulty, starting shurikens and control
-scheme. These choices and your bindings persist across application restarts.
+scheme. **DISABLE** is a distinct melee-only shuriken setting: it hides the ammo
+HUD, suppresses shuriken pickups and ranged attacks, and follows the run through
+deaths, continues, stages and saves. Finite aerial bursts fire only the ammunition
+remaining. Techniques can be selected with zero uses; casting still requires a use.
+These choices and your bindings persist across application restarts.
 Choose a classic layout, **6 BUTTON**, or **DEDICATED**. All keyboard and
 controller bindings can be changed or restored in **F1 → Controls**, where the
 scheme selector and action names explain each input.
@@ -122,6 +126,8 @@ retains the original proximity-based choice.
 Menus support keyboard, controller and mouse together. Hover selects a row;
 click activates it. In options, click the left or right side of a setting to
 change it; click a sound-test label to play it and right-click to stop it.
+The S.E. list also includes the two driver effects omitted by the original menu,
+labelled **SFX $AB** and **SFX $D7** because the ROM provides no names.
 Use the wheel or directions to scroll. Arrows indicate more rows above or below;
 keyboard/controller selection stays visible and returning from Options preserves
 main-menu focus. **Escape** or controller **Back / View** goes back, cancels a confirmation or resumes pause.
@@ -146,14 +152,30 @@ panel is open; pause first if you need time to adjust settings.
 | Shortcut | Action |
 | --- | --- |
 | **F1** | Display, controls, audio and saves panel |
+| **F2** | Toggle performance overlay |
+| **F3** | Guided control rebinding |
 | **F5 / F6** | Save / load the selected save slot |
 | **F7 / F8** | Smaller / larger window |
 | **F9 / F10** | Lower / raise volume |
 | **F11** | Toggle fullscreen |
+| **F12** | Save a PNG screenshot |
 
 **Display** offers widescreen that adapts to your window or monitor, including
 ultrawide displays, the original 320×224 view, optional CRT effects and scanlines.
 Integer scaling preserves whole pixels; turn it off to use the full display height.
+**F2** shows current and average FPS, frame time, a scrolling 240-frame graph,
+CPU raster/upload/submission times, presentation wait, sprite count, upload size
+and rendering resolutions. Measurements describe presentation and leave the
+60 Hz simulation unchanged. F1 and F2 can be shown together; F1 has priority
+where their panels overlap in small windows.
+
+**F12** saves the displayed game viewport at its displayed pixel dimensions and
+aspect ratio, including the game HUD and CRT/scanline effects. Desktop panels,
+the F2 overlay, notifications and letterboxing are excluded. Files go into
+`screenshots/` beside `settings.ini` (or the working directory if no configuration
+folder is available), with unique names. A brief message shows the saved path or
+failure. PNG encoding runs in a background worker; holding F12 saves once.
+
 **Controls** lets you rebind keys and choose a controller.
 **Saves** provides eight slots. **Art packs** lets you select custom artwork or
 return to the original graphics from your ROM.
@@ -165,6 +187,15 @@ Settings and saves persist in your user configuration folder:
 | Windows | `%APPDATA%\ninja-master\` |
 | macOS | `~/Library/Application Support/ninja-master/` |
 | Linux | `$XDG_CONFIG_HOME/ninja-master/` or `~/.config/ninja-master/` |
+
+## Gameplay comparison checks
+
+Focused cartridge tests and numeric original-ROM traces are described in
+[native/tests/data/fidelity.txt](native/tests/data/fidelity.txt). The double-jump
+movement and animation matched the original sample; their tuning is preserved.
+Classic melee now samples proximity before turning, as the original does. The
+first forest boss exit walks into the broken opening and transitions before
+Joe reaches the pit beyond it.
 
 ## License
 

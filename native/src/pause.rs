@@ -143,7 +143,7 @@ impl Pause {
         }
     }
     /// `Pause_S0C`: `inp_new_y`, or `inp_new_x` when that is zero, steps the
-    /// selection while a use is left.
+    /// selection independently of the casting stock.
     fn select(&mut self, input: Input) {
         let vertical =
             i32::from(input.pressed(Button::Down)) - i32::from(input.pressed(Button::Up));
@@ -153,8 +153,8 @@ impl Pause {
         let Some(game) = held_game_mut(&mut self.saved) else {
             return;
         };
-        let (selected, uses) = game.ninjutsu();
-        if uses == 0 || (vertical == 0 && horizontal == 0) {
+        let (selected, _) = game.ninjutsu();
+        if vertical == 0 && horizontal == 0 {
             return;
         }
         game.select_ninjutsu((selected as i32 + step).rem_euclid(4) as usize);

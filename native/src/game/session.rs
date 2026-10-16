@@ -40,6 +40,7 @@ impl Game {
                 game.music_request = None;
             }
         }
+        game.sync_shurikens();
         Ok(game)
     }
     /// Direct `Mode_Game` state `$20` without the mode layer (tests and
@@ -111,6 +112,7 @@ impl Game {
             .options
             .extra_life_step(&self.rom)
             .map(|step| (step, step));
+        self.sync_shurikens();
     }
     /// CONTINUE on the game-over screen: `Mode_Game` state `$28` goes back
     /// to state 4, so the substage restarts from part 0 with the lives,
@@ -128,6 +130,7 @@ impl Game {
         game.round_flags = self.round_flags;
         game.combat.weapons.ninjutsu_selected = self.combat.weapons.ninjutsu_selected;
         game.start_lives();
+        game.sync_shurikens();
         Ok(game)
     }
     /// `Mode_Game` state `$20` after the fade (`$B096`): `Lives` - 1. With

@@ -1,0 +1,96 @@
+Gameplay and fidelity verification (roadmap #2)
+
+No ROM, disassembly, artwork or audio is included. CSVs contain numeric RAM
+observations only. capture.json identifies the local cartridge and emulator build.
+
+Reproduce the original evidence:
+  python3 tools/capture_fidelity.py --core /path/to/genesis_plus_gx_libretro.so \
+      --rom /path/to/shinobi3_us.bin --out out/fidelity
+Use an upstream Genesis Plus GX development libretro build exposing work_ram and
+the m68k_get_reg/set_reg/run symbols. The script boots the unmodified US cartridge
+with six Start presses and advances exactly one video frame per sample. It then
+calls the ROM's Player_MeasureEnemy routine in isolation with controlled registers
+and target records. The emulator and cartridge remain outside the repository.
+
+Run native checks with your three verified dumps in rom/, or set
+NINJA_MASTER_TEST_ROMS to their directory:
+  cargo test --manifest-path native/Cargo.toml --no-default-features --lib -- --include-ignored
+  cargo test --manifest-path native/Cargo.toml --no-default-features --test roadmap -- --ignored
+  cargo test --manifest-path native/Cargo.toml --bin ninja-master-native
+
+#24 Double jump
+The 110-frame NTSC recording starts at (32,496), holds C for 15 frames, releases,
+then presses C on frame 31, when |vy| first lies strictly inside $17000.
+Native x/y/velocity and animation state/cursor match EVERY row, including takeoff,
+the two 4px lifts, -5px/frame somersault impulse, $3400/frame gravity, descent,
+landing and return to idle. Coordinates/velocities in the CSV are 16.16; native
+comparisons shift by eight bits to 8.8. No speed, gravity or animation tuning was
+changed. The same numeric trace is checked using all three prepared regional
+cartridges. Difficulty does not enter the Player movement calculation. NTSC is
+60Hz; the port deliberately runs EU data at 60Hz, not the console's PAL 50Hz.
+The fixture is an original NTSC video capture, not a PAL timing claim. The code
+uses walk/run input, not jump hold, to select horizontal speed during somersaults.
+
+#26 Proximity melee
+704 original Player_MeasureEnemy ($22810) calls cover 63/64/65px attack boundaries,
+16/17px rear tolerance, standing/crouching vertical tolerances, both facings,
+vertical distance, and equal/opposite priority layers. Melee uses Manhattan
+distance STRICTLY LESS than 64. Native calculations match every row.
+Confirmed discrepancy: Player_Update samples proximity at $1FD68 BEFORE dispatching
+the state handler; the native selector used the handler's updated facing. A turn
+and attack on the same update could therefore choose a different weapon. The
+port now caches the sample before the handler and preserves it for that attack.
+Regression checks cover turn+attack, eligible/hidden/dormant/defeated targets,
+excluded enemy kinds $8C..$94, multiple targets, all ordinary attack postures,
+zero ammo, and dedicated melee/ranged overrides. No threshold was retuned.
+
+#13 Missing SFX
+Compared Options_Menu ($8A36), Options_SE ($8E2E), Options_Voice ($8EB4), the
+66 sound-test records ($5B56), and the driver's 60 effect headers ($6CF2C).
+Navigation/value/exit actions do not request navigation beeps in the ROM.
+Exactly TWO driver commands have NO sound-test record: $AB (header $77EE4,
+2 channels) and $D7 (header $78CF4, 1 channel), including hidden records in the
+comparison. Append these to the native list, after original index $41, with
+numeric names; retain original ordering, hidden entries, stop/play and music/
+voice tests. All three regional ROMs supply both effects. Tests synthesize both
+to nonzero PCM, check one play request per press, no hold retrigger and mouse play/
+stop. Names or intended gameplay roles were not guessed.
+
+#23 Broken doorway
+Located in 1-1 part 2, the $B8 Samurai Leader encounter, not the cave's Boss1
+fade. The ROM allocates the gate and breakable boulders via $1C2CC/$1C470. After
+the leader death, the native walk-out waited for camera+$160 (~2084), past the
+floor's edge: Joe visibly fell after the opening. The script now ends at the
+rightmost boulder's ROM X (2042) before entering the pit, keeping the original
+120-tick post-explosion wait. Forced WalkRight overrides ordinary movement,
+attack and jump input. The cartridge itself can request its transition as soon
+as $1C018 is reached; the visible walk into the opening is the requested native
+choreography. The regression enters the real camera lock, lets the boulders break,
+triggers the leader's normal death sequence, opposes the walk with player input,
+and checks arrival inside the opening, grounded Y and progression into 1-2.
+
+#10/#11/#12 and saved runs
+Disable is shuriken option 8, distinct from original option 3 (zero starting ammo).
+Existing options byte serialization is retained; settings and replay decoding now
+accept 8. Tests cover finite burst counts 0/1/3/8/12, subsequent bursts, allocation
+limits, infinite ammo, dedicated ranged inputs, container/enemy pickup suppression,
+technique selection/casting with zero stock, death, continue and stage changes.
+The disk checkpoint/restart test now uses Disable to verify that saved runs retain
+it. Prior replay saves remain subject to their existing state checksum validation;
+recordings whose combat results change may be rejected rather than restored wrong.
+
+#16/#21 Desktop checks
+F12 captures the actual SDL game viewport before the F1/F2/toast passes: lossless
+RGB PNG, current aspect and display effects, no desktop overlays or letterbox.
+Unique create_new filenames prevent overwrites, one bounded writer runs off-thread,
+and failures are returned as transient feedback. F2 history retains 240 real
+presentation intervals; it reports CPU measurements and never claims GPU timings.
+Guided rebinding moved from F2 to F3. F1 remains independent.
+PNG round-trip/error and frame-history wrap/stutter tests run without a ROM.
+Linux desktop checks passed with Xvfb + Openbox: both windowed and fullscreen,
+CRT and flat output, menus and gameplay, F1/F2 together, a held F12 producing one
+file, and an unwritable screenshot destination returning visible feedback.
+PNG viewport regression verifies exact pixel contents and dimensions across
+fullscreen round trips. Empty ImGui frames are handled without entering the
+library's null draw-list iterator. Windows/macOS use the same SDL,
+PNG and configuration-path code and still need platform runtime verification.

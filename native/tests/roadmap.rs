@@ -234,6 +234,7 @@ fn continue_survives_restart_and_new_game_requires_confirmation() {
     front.options = GameOptions {
         control: 5,
         level: 1,
+        shurikens: ninja_master_native::options::DISABLED_SHURIKENS,
         ..GameOptions::default()
     };
     let mut modes = Modes::new(Box::new(Title::menu(front.clone())));

@@ -91,6 +91,7 @@ struct GameHooks<'a> {
 impl PlayerHooks for GameHooks<'_> {
     fn attack(&mut self, posture: AttackPosture, facing_left: bool) -> Option<Attack> {
         let ammo = self.combat.hud.ammo;
+        let spread_count = self.combat.weapons.shots.len();
         self.combat
             .set_player_motion(self.airborne, self.velocity_y);
         let attack = self
@@ -98,7 +99,10 @@ impl PlayerHooks for GameHooks<'_> {
             .start_player_attack(posture, self.position, facing_left);
         // $231CA..$232D8: every throw, the somersault spread included, sets
         // $FF37EC bit 0 (no SHINOBI bonus).
-        if attack == Some(Attack::Throw) || self.combat.hud.ammo < ammo {
+        if attack == Some(Attack::Throw)
+            || self.combat.hud.ammo < ammo
+            || self.combat.weapons.shots.len() > spread_count
+        {
             self.flags.thrown = true;
         }
         attack
@@ -407,7 +411,9 @@ impl Game {
                 self.cue(SoundEvent::NinjutsuSelect);
             }
         }
+        self.sync_shurikens();
         let result = self.game_run_frame(input);
+        self.sync_shurikens();
         if advancing && self.death.is_none() {
             self.advance_door();
         }
@@ -415,6 +421,18 @@ impl Game {
             self.lag = self.lag.saturating_add(HIT_LAG + self.extra_hit_lag());
         }
         result
+    }
+    pub(super) fn sync_shurikens(&mut self) {
+        let disabled = self.options.shurikens_disabled();
+        self.combat.shurikens_disabled = disabled;
+        self.combat.infinite_shurikens = self.options.infinite && !disabled;
+        self.objects.shurikens_disabled = disabled;
+        if disabled {
+            self.combat.hud.ammo = 0;
+            self.objects.pickups.retain(|pickup| pickup.kind > 1);
+        } else if self.options.infinite {
+            self.combat.hud.ammo = crate::options::INFINITE_AMMO;
+        }
     }
     /// The three two-frame 7-3 stalls in the emulator capture all occur
     /// while the grounded `$300` boss pose and at least six independent
@@ -461,7 +479,7 @@ impl Game {
         self.combat.hud.update_score_display(); // Score_Display, +10 per frame.
         self.high_score = self.high_score.max(self.combat.hud.score); // $124CA
         self.award_extra_life(); // Func_0124C4 -> Func_01257E
-        if self.options.infinite {
+        if self.options.infinite && !self.options.shurikens_disabled() {
             // Game_Options bit 7: throws never use up Ammo; the HUD shows 999.
             self.combat.hud.ammo = crate::options::INFINITE_AMMO;
         }
@@ -513,7 +531,10 @@ impl Game {
                 self.sync_stage_camera();
                 return false;
             }
+            self.combat
+                .sample_attack_proximity(self.player.position(), self.player.facing_left);
             let ammo = self.combat.hud.ammo;
+            let spread_count = self.combat.weapons.shots.len();
             let events = special.tick(
                 input,
                 &mut self.player,
@@ -531,7 +552,8 @@ impl Game {
             self.apply_signals(&events.signals);
             if events.lethal {
                 self.round_flags.damaged = true; // $21E92
-            } else if self.combat.hud.ammo < ammo {
+            } else if self.combat.hud.ammo < ammo || self.combat.weapons.shots.len() > spread_count
+            {
                 self.round_flags.thrown = true;
             }
             self.extend_cues(events.sounds);
@@ -545,6 +567,7 @@ impl Game {
                     special.throw_rider(&self.player, &mut self.combat);
                 }
             }
+            self.combat.weapons.proximity = None;
             self.update_enemies(input.held(Button::Down));
             self.tick_objects(0);
             self.update_attacks();
@@ -606,6 +629,8 @@ impl Game {
             .as_ref()
             .map(doors::Door::event)
             .or_else(|| self.arena_player_event(events.player_event));
+        self.combat
+            .sample_attack_proximity(player_position, self.player.facing_left);
         let player_high_priority = self.combat.player_high_priority();
         let mut hooks = GameHooks {
             combat: &mut self.combat,
@@ -634,6 +659,7 @@ impl Game {
             &mut hooks,
         );
         let touched = terrain.touched();
+        self.combat.weapons.proximity = None;
         self.combat.mech_hand_contact = self.objects.mech_hands_touched(touched);
         if let Some(ticks) = self.player.immunity_hold {
             self.combat.invulnerability = ticks;
@@ -955,3 +981,6 @@ impl Game {
         }
     }
 }
+
+#[cfg(test)]
+mod roadmap_tests;

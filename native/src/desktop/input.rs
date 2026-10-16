@@ -115,11 +115,13 @@ impl InputMap {
 }
 
 /// Front-end keys that are never bound to pad controls.
-pub(super) const RESERVED_KEYS: [Scancode; 11] = [
+pub(super) const RESERVED_KEYS: [Scancode; 13] = [
     Scancode::Escape,
     Scancode::Backspace,
     Scancode::F1,
     Scancode::F2,
+    Scancode::F3,
+    Scancode::F12,
     Scancode::F5,
     Scancode::F6,
     Scancode::F7,

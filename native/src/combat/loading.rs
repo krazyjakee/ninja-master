@@ -221,6 +221,8 @@ impl Combat {
             holds: 0,
             score_suppressed: false,
             level: 0,
+            shurikens_disabled: false,
+            infinite_shurikens: false,
             item_boxes: Vec::new(),
             mutants: enemies::round3::Mutants::default(),
         })

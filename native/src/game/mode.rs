@@ -48,7 +48,7 @@ impl Mode for Game {
             // update (mode $22A96), which sets the lag that follows it.
             let lagging = self.lag > 0;
             Game::tick(self, input);
-            if self.options.infinite {
+            if self.options.infinite && !self.options.shurikens_disabled() {
                 self.combat.hud.ammo = crate::options::INFINITE_AMMO;
             }
             if self.requests & (REQUEST_LIFE_LOST | REQUEST_PART_LOAD) == REQUEST_PART_LOAD {

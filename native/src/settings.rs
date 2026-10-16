@@ -230,7 +230,7 @@ impl Settings {
                     if value
                         <= match key {
                             "level" => 3,
-                            "shurikens" => 7,
+                            "shurikens" => crate::options::DISABLED_SHURIKENS,
                             _ => 5,
                         } =>
                 {
@@ -584,7 +584,7 @@ mod tests {
             let mut settings = Settings {
                 game: crate::options::GameOptions {
                     level: 3,
-                    shurikens: 7,
+                    shurikens: crate::options::DISABLED_SHURIKENS,
                     infinite: true,
                     control,
                     invincible: false,
@@ -595,7 +595,7 @@ mod tests {
             settings.gamepad.assign(Button::Y, "leftshoulder");
             assert_eq!(Settings::parse(&settings.to_ini()).0, settings);
         }
-        let (settings, warnings) = Settings::parse("[game]\ncontrol = 6\nlevel = 4\nshurikens = 8");
+        let (settings, warnings) = Settings::parse("[game]\ncontrol = 6\nlevel = 4\nshurikens = 9");
         assert_eq!(warnings.len(), 3);
         assert_eq!(settings.game, crate::options::GameOptions::default());
         assert_eq!(control_label(Button::Ninjutsu, 4), "A (guard)");

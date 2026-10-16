@@ -3,9 +3,9 @@ use super::Game;
 use crate::sound_events::SoundEvent;
 
 impl Game {
-    /// `Pause_S0C` writes `$FF37E7` only while a use is left.
+    /// Select a technique independently of the remaining casting stock.
     pub fn select_ninjutsu(&mut self, index: usize) -> bool {
-        if self.combat.weapons.ninjutsu_uses == 0 || index > 3 {
+        if index > 3 {
             return false;
         }
         self.combat.weapons.ninjutsu_selected = index as u8;

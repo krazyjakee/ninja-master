@@ -318,7 +318,10 @@ fn decode_options(reader: &mut Reader<'_>) -> Result<crate::options::GameOptions
         control: reader.byte()?,
         invincible: reader.boolean()?,
     };
-    if options.level > 3 || options.shurikens > 7 || options.control > 5 {
+    if options.level > 3
+        || options.shurikens > crate::options::DISABLED_SHURIKENS
+        || options.control > 5
+    {
         return Err("invalid saved options".into());
     }
     Ok(options)

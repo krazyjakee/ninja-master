@@ -240,6 +240,7 @@ pub struct StageObjects {
     pub spawned: u32,
     pub objects: Vec<Object>,
     pub pickups: Vec<Pickup>,
+    pub(crate) shurikens_disabled: bool,
     bombs: Vec<Bomb>,
     flames: Vec<Flame>,
     /// List-1 type 6, the 5-2 floor fire.
@@ -265,6 +266,7 @@ impl StageObjects {
             spawned: 0,
             objects: Vec::new(),
             pickups: Vec::new(),
+            shurikens_disabled: false,
             bombs: Vec::new(),
             flames: Vec::new(),
             fires: Vec::new(),

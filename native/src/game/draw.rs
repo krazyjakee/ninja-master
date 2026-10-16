@@ -253,6 +253,7 @@ impl Game {
                 ninjutsu_selected: self.combat.weapons.ninjutsu_selected,
                 score_display: hud.score_display,
                 infinite_shurikens: self.options.infinite,
+                shurikens_disabled: self.options.shurikens_disabled(),
             },
         );
         if let Some(fade) = self.fade {

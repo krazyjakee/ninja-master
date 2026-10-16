@@ -1,6 +1,8 @@
 mod art;
 mod audio;
+mod capture;
 mod input;
+mod performance;
 mod presentation;
 // OpenGL/SDL interop is confined to this presentation module.
 #[allow(unsafe_code)]
@@ -232,6 +234,15 @@ pub(super) fn run(
     });
     panel.gallery.set_art_pack(frame.art_pack());
     let mut show_panel = options.devtools;
+    let mut performance = performance::Performance::default();
+    let mut screenshots = capture::Capture::default();
+    let screenshot_directory = config_path
+        .as_deref()
+        .and_then(Path::parent)
+        .map(|directory| directory.join("screenshots"))
+        .unwrap_or_else(|| std::path::PathBuf::from("screenshots"));
+    let mut screenshot_requested = false;
+    let mut toast: Option<(String, Instant)> = None;
     let mut tools = matches!(scene, Scene::Play(_)).then(|| DevTools::new(rom));
     if let (Some(tools), Scene::Play(modes)) = (&mut tools, &mut *scene) {
         let effects = ["palette", "parallax", "priority", "vegetation"]
@@ -307,6 +318,18 @@ pub(super) fn run(
         let mut settings_changed = false;
         let mut window_settings_changed = false;
         let mut had_event = false;
+        if let Some(message) = screenshots.poll() {
+            eprintln!("{message}");
+            toast = Some((message, Instant::now() + Duration::from_secs(5)));
+            repaint = true;
+        }
+        if toast
+            .as_ref()
+            .is_some_and(|(_, until)| Instant::now() >= *until)
+        {
+            toast = None;
+            repaint = true;
+        }
         for event in events.poll_iter() {
             had_event = true;
             match event {
@@ -329,6 +352,23 @@ pub(super) fn run(
                     physical_keys.clear();
                 }
                 _ => {}
+            }
+            // Desktop shortcuts remain available during both binding flows.
+            if let Event::KeyDown {
+                scancode: Some(key),
+                repeat: false,
+                ..
+            } = event
+                && focused
+                && matches!(key, Scancode::F2 | Scancode::F12)
+            {
+                if key == Scancode::F2 {
+                    performance.visible = !performance.visible;
+                } else {
+                    screenshot_requested = true;
+                }
+                repaint = true;
+                continue;
             }
             if let Some((button, device)) = capture {
                 let binding = match event {
@@ -536,7 +576,7 @@ pub(super) fn run(
                                 status = Some(tools.status.clone());
                             }
                         }
-                        Scancode::F2 => {
+                        Scancode::F3 => {
                             capture = None;
                             rebinder = Some(Rebinder::new(&settings));
                         }
@@ -671,6 +711,10 @@ pub(super) fn run(
             None => real_ticks,
         };
         let mut ticked = false;
+        performance.ticks = ticks as u32;
+        performance.raster_ms = 0.0;
+        performance.upload_ms = 0.0;
+        performance.upload_bytes = 0;
         if release_inputs && map.mask(&physical_keys, &pads, &settings.controller) == 0 {
             release_inputs = false;
         }
@@ -760,10 +804,13 @@ pub(super) fn run(
             upload = true;
         }
         if ticked {
+            let raster_start = Instant::now();
             scene.draw(frame);
+            performance.raster_ms = raster_start.elapsed().as_secs_f32() * 1000.0;
             upload = true;
         }
         if std::mem::take(&mut upload) {
+            let upload_start = Instant::now();
             let pixels = if focused {
                 frame.presentation_rgb()
             } else {
@@ -794,13 +841,16 @@ pub(super) fn run(
                     frame.output_height(),
                 )?;
             }
+            performance.upload_ms = upload_start.elapsed().as_secs_f32() * 1000.0;
+            performance.upload_bytes = pixels.len() * if crt_enabled { 2 } else { 1 };
             repaint = true;
         }
         // The panel redraws at the tick rate and on input.
-        if show_panel && (real_ticks > 0 || had_event) {
+        if (show_panel || performance.visible || toast.is_some()) && (real_ticks > 0 || had_event) {
             repaint = true;
         }
         if std::mem::take(&mut repaint) || pacing != Pacing::Clock {
+            let submit_start = Instant::now();
             canvas.set_draw_color(sdl2::pixels::Color::BLACK);
             canvas.clear();
             let rect = game_rect(&canvas, &settings)?;
@@ -817,6 +867,19 @@ pub(super) fn run(
             } else {
                 canvas.copy(&texture, None, rect)?;
             }
+            performance.submit_ms = submit_start.elapsed().as_secs_f32() * 1000.0;
+            if std::mem::take(&mut screenshot_requested)
+                && let Err(error) =
+                    screenshots.request(&mut canvas, rect, screenshot_directory.clone())
+            {
+                let message = format!("Screenshot failed: {error}");
+                eprintln!("{message}");
+                toast = Some((message, Instant::now() + Duration::from_secs(5)));
+            }
+            let source_size = (frame.output_width(), frame.output_height());
+            let viewport_size = (rect.width(), rect.height());
+            let sprites = frame.sprite_count();
+            let renderer = canvas.info().name;
             if show_panel {
                 if let Some(tools) = &tools {
                     if panel.gallery.prepare(rom, &tools.stages) {
@@ -885,7 +948,9 @@ pub(super) fn run(
                 };
                 let mut actions = panel::Actions::default();
                 gui.draw(&mut canvas, |ui| {
+                    performance.show(ui, source_size, viewport_size, sprites, renderer);
                     actions = panel.show(ui, scene, tools.as_mut(), &mut settings, &info);
+                    performance::feedback(ui, &toast);
                 })?;
                 if let Some(action) = actions.art {
                     let mut replace = None;
@@ -993,9 +1058,17 @@ pub(super) fn run(
                     scene.draw(frame);
                     upload = true;
                 }
-            } else if text_input_active {
-                video.text_input().stop();
-                text_input_active = false;
+            } else {
+                if performance.visible || toast.is_some() {
+                    gui.draw(&mut canvas, |ui| {
+                        performance.show(ui, source_size, viewport_size, sprites, renderer);
+                        performance::feedback(ui, &toast);
+                    })?;
+                }
+                if text_input_active {
+                    video.text_input().stop();
+                    text_input_active = false;
+                }
             }
             if ticked && pacing == Pacing::Clock {
                 let due = (now + PRESENT_LEAD)
@@ -1003,11 +1076,14 @@ pub(super) fn run(
                     .unwrap_or(now);
                 std::thread::sleep(due.saturating_duration_since(Instant::now()));
             }
+            let present_start = Instant::now();
             canvas.present();
+            performance.present_ms = present_start.elapsed().as_secs_f32() * 1000.0;
             let presented = Instant::now();
             if let Some(previous_present) = last_present {
                 let period = presented.duration_since(previous_present);
                 panel.observe_present(period.as_secs_f32() * 1000.0);
+                performance.observe(period);
                 if timing_log {
                     eprintln!(
                         "{},{},{},{},{}",
@@ -1039,6 +1115,7 @@ pub(super) fn run(
             std::thread::sleep(clock.until_tick().saturating_sub(previous.elapsed()));
         }
     }
+    screenshots.finish();
     if let Scene::Play(modes) = scene {
         modes.checkpoint();
     }

@@ -221,6 +221,8 @@ pub struct Combat {
     /// column boss handlers read from their timer tables (`Data_02C480`).
     /// The game mirrors `GameOptions::level` before each tick.
     pub(crate) level: u8,
+    pub(crate) shurikens_disabled: bool,
+    pub(crate) infinite_shurikens: bool,
     /// Intact list-6 item boxes, refreshed before the player's update.
     item_boxes: Vec<AttackTarget>,
     /// `$FF3D05`/`$FF3D06`, the 3-1 `$FC` counters (`enemies::round3`).

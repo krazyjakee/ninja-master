@@ -1,0 +1,8 @@
+{
+  "rom_sha1": "1e07d7998e3048fcfba4238ae96496460e91b3a5",
+  "core_sha256": "b7893a77eb166f0f9291af0ad29d8a809555debd02609efce3f7a2db025f99e7",
+  "motion_frames": 110,
+  "boundary_cases": 704,
+  "motion_units": "16.16 pixels, one original NTSC video frame per row",
+  "boundary_routine": "Player_MeasureEnemy $22810, called before the state handler"
+}

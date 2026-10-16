@@ -133,6 +133,13 @@ impl<'t> Gui<'t> {
         prepare(self.context.io_mut(), canvas.window(), &mut self.last_frame);
         build(self.context.new_frame());
         let data = self.context.render();
+        // New auto-sized windows can produce an empty first frame. imgui
+        // 0.12's iterator constructs a slice from a null pointer in that
+        // case, which current Rust debug builds correctly reject.
+        if data.draw_lists_count() == 0 {
+            canvas.set_clip_rect(None);
+            return Ok(());
+        }
         let [scale_x, scale_y] = data.framebuffer_scale;
         let [origin_x, origin_y] = data.display_pos;
         for list in data.draw_lists() {
