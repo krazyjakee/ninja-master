@@ -59,6 +59,24 @@ impl PlayerFrame {
     pub fn draw(&self, frame: &mut Frame, palettes: &Lines<'_>, x: i32, y: i32, flip_x: bool) {
         self.draw_on_line(frame, palettes, (x, y), flip_x, 0);
     }
+    /// Checkerboard transparency keeps the practice ghost visible every frame.
+    pub(crate) fn draw_ghost(
+        &self,
+        frame: &mut Frame,
+        palettes: &Lines<'_>,
+        x: i32,
+        y: i32,
+        flip_x: bool,
+    ) {
+        let mut ghost = self.clone();
+        ghost.art_id = None;
+        for tile in &mut ghost.tiles {
+            for (at, byte) in tile.tile.0.iter_mut().enumerate() {
+                *byte &= if (at / 4) % 2 == 0 { 0xf0 } else { 0x0f };
+            }
+        }
+        ghost.draw(frame, palettes, x, y, flip_x);
+    }
     /// `draw` for a record whose tile word selects palette `line`, which
     /// `Object_DrawSprite` XORs into each piece (the 2-1 horse's `$2000`).
     pub fn draw_on_line(

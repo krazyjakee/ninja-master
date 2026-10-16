@@ -10,27 +10,25 @@
 //! (`$3AC6`) maps the pad through the control type. `GameOptions` is that
 //! state; every value is read from the ROM tables.
 //!
-//! The screen: `Options_Init` draws OPTION and the seven items, Up/Down
-//! moves the cursor (`$FF00F6`), and the item under it reacts
-//! (`Options_Items`). Start anywhere, or any button on EXIT, stops the
-//! sound and fades back to `Mode_Title` (`Options_Exit`). The sound test
-//! plays through the mode layer's `Audio`, like every other request.
-//!
-//! The backdrop is the title picture as `Options_Init` rebuilds it
-//! (`crate::title_art`): dimmed by shadow/highlight except behind a
-//! priority window, with the item texts written into plane A in their
-//! original colours and the cursor sprite.
+//! The screen keeps the cartridge's font, backdrop, option order and sound
+//! test commands. A fixed native layout gives every control scheme room for
+//! its diagram, with readable panels and matching mouse targets. Start or
+//! Back stops the sound and fades back to the title.
 
 use crate::{
     front_end::{Front, Next, Screen},
     input::{Button, Input},
-    menu::{Menu, MenuEvent},
+    menu::MenuEvent,
     modes::{Audio, Mode, ModeChange},
-    render::Frame,
+    render::{Color, FADE_STEPS, Fade, Frame},
     rom,
+    settings::DisplaySettings,
     sound_events::{EFFECT_TABLE, MUSIC_TABLE, Table, VOICE_TABLE},
+    text::Style,
     title_art::TitleArt,
 };
+
+mod display;
 
 /// Per level: spare lives, maximum health (NORMAL 2/16, EASY 9/16, HARD
 /// 2/12, EXPERT 2/8).
@@ -68,8 +66,11 @@ const INVINCIBLE_SEQUENCE: usize = 0x8daa;
 const INVINCIBLE_LENGTH: usize = 5;
 /// `Hud_DrawAmmo` shows 999 for infinite shurikens.
 pub const INFINITE_AMMO: u16 = 999;
-/// Native option following the eight original ammunition counts.
+/// Native option stored after the eight original ammunition counts.
 pub const DISABLED_SHURIKENS: u8 = 8;
+/// Display order: Disabled, 0, 10, 20, 30, 40, 50, 60, 70.
+/// Keep the stored ROM indices stable for settings and saved runs.
+const SHURIKEN_ORDER: [u8; 9] = [DISABLED_SHURIKENS, 3, 4, 5, 6, 7, 0, 1, 2];
 
 /// The tables are at fixed addresses; a short image reads zeros.
 fn byte(rom: &[u8], at: usize) -> u8 {
@@ -221,6 +222,28 @@ const MUSIC: usize = 3;
 const SE: usize = 4;
 const VOICE: usize = 5;
 const EXIT: usize = 6;
+const LABELS: [&str; ITEMS] = [
+    "LEVEL",
+    "SHURIKENS",
+    "CONTROLS",
+    "MUSIC",
+    "S.E.",
+    "VOICE",
+    "BACK",
+];
+const ROW_TOPS: [i32; ITEMS] = [32, 48, 64, 132, 148, 164, 180];
+const ROW_HEIGHT: i32 = 16;
+const VALUE_X: i32 = 144;
+const VALUE_MIDDLE: i32 = 216;
+const WHITE: Color = [220, 224, 232];
+const MUTED: Color = [164, 176, 196];
+const GOLD: Color = [255, 210, 100];
+const PANEL: Color = [8, 12, 24];
+const FOCUS: Color = [40, 50, 76];
+/// `Data_008D4C`: NINJITSU, ATTACK, JUMP (8 characters each), selected
+/// per control type and button by the offsets in `Data_008D3C`.
+const CONTROL_NAMES: usize = 0x8d4c;
+const CONTROL_ORDER: usize = 0x8d3c;
 /// Sound test ranges (`$1D`, `$42`, `$16` records).
 const MUSIC_COUNT: i32 = 0x1d;
 const EFFECT_COUNT: i32 = 0x42;
@@ -246,8 +269,13 @@ pub struct OptionsScreen {
     screen: Screen,
     /// `$FF00F6` / 4.
     pub cursor: usize,
-    viewport: Menu,
-    pointer_input: Input,
+    display_page: bool,
+    tabs_focused: bool,
+    display_cursor: usize,
+    display: DisplaySettings,
+    display_changed: bool,
+    display_available: bool,
+    crt_error: Option<String>,
     /// `$FF00F8`, `$FF00FA`, `$FF00FC`: sound test selections (1 on entry).
     pub music: u16,
     pub effect: u16,
@@ -256,6 +284,9 @@ pub struct OptionsScreen {
     pub voice: u16,
     /// `$FF0100`: frames a direction has been held.
     repeat: u16,
+    repeat_directions: u16,
+    /// Last requested sound-test action; avoids implying a short sample loops.
+    feedback: String,
     /// `$FF00FE`: the infinite-shuriken timer.
     secret: u16,
     /// `$FF9C12`: progress through the invincibility sequence; `None` after
@@ -290,12 +321,19 @@ impl OptionsScreen {
             screen,
             extra_effects,
             cursor: 0,
-            viewport: Menu::new(48, 6, 22),
-            pointer_input: Input::default(),
+            display_page: false,
+            tabs_focused: false,
+            display_cursor: 0,
+            display: DisplaySettings::default(),
+            display_changed: false,
+            display_available: false,
+            crt_error: None,
             music: 1,
             effect: 1,
             voice: 1,
             repeat: 0,
+            repeat_directions: 0,
+            feedback: String::new(),
             secret: 0,
             sequence: Some(0),
         }
@@ -306,19 +344,38 @@ impl OptionsScreen {
     fn rom(&self) -> &[u8] {
         &self.screen.front.rom
     }
-    /// `Func_008FAE`: Left/Right presses, auto-repeating while held.
-    fn repeat_x(&mut self, input: Input) -> i32 {
-        let directions = [Button::Left, Button::Right, Button::Up, Button::Down];
-        if !directions.iter().any(|&button| input.held(button)) {
+    /// Repeat only an unchanged held direction, after an initial delay.
+    fn repeat_input(&mut self, mut input: Input) -> Input {
+        let mask =
+            Button::Left.mask() | Button::Right.mask() | Button::Up.mask() | Button::Down.mask();
+        let directions = input.held & mask;
+        if directions == 0 || directions != self.repeat_directions || input.pressed & mask != 0 {
             self.repeat = 0;
-        }
-        self.repeat = self.repeat.saturating_add(1);
-        let (right, left) = if self.repeat >= REPEAT_DELAY && self.screen.ticks.is_multiple_of(4) {
-            (input.held(Button::Right), input.held(Button::Left))
         } else {
-            (input.pressed(Button::Right), input.pressed(Button::Left))
-        };
-        i32::from(right) - i32::from(left)
+            self.repeat = self.repeat.saturating_add(1);
+            if self.repeat >= REPEAT_DELAY {
+                let mut repeated = directions;
+                // Repeating toggles would rapidly resize the window or flash
+                // the presentation. Only numeric/choice values repeat.
+                if self.display_page
+                    && !self.tabs_focused
+                    && matches!(self.display_cursor, 0 | 2 | 4 | 5 | 6)
+                {
+                    repeated &= !(Button::Left.mask() | Button::Right.mask());
+                }
+                input.pressed |= repeated;
+                self.repeat = REPEAT_DELAY - 4;
+            }
+        }
+        self.repeat_directions = directions;
+        input
+    }
+    fn select(&mut self, row: usize) {
+        if row != self.cursor {
+            self.secret = 0;
+            self.feedback.clear();
+        }
+        self.cursor = row;
     }
     /// Step a sound test selection, wrapping and skipping hidden records.
     fn step_sound(&self, table: usize, count: i32, current: u16, delta: i32) -> u16 {
@@ -344,12 +401,40 @@ impl OptionsScreen {
     }
     /// `Options_Menu` and the item under the cursor (`Options_Items`).
     fn menu(&mut self, input: Input) {
+        if input.pressed(Button::X) || input.pressed(Button::Y) {
+            self.change_page(input.pressed(Button::Y));
+            return;
+        }
         let vertical =
             i32::from(input.pressed(Button::Down)) - i32::from(input.pressed(Button::Up));
+        if self.tabs_focused {
+            if input.pressed(Button::Left) || input.pressed(Button::Right) {
+                self.change_page(input.pressed(Button::Right));
+            }
+            if vertical != 0 || input.pressed(Button::Attack) || input.pressed(Button::Jump) {
+                self.tabs_focused = false;
+                if self.display_page {
+                    self.display_cursor = if vertical < 0 { 10 } else { 0 };
+                } else {
+                    self.select(if vertical < 0 { EXIT } else { LEVEL });
+                }
+            }
+            return;
+        }
+        if self.display_page {
+            self.display_menu(input);
+            return;
+        }
         if vertical != 0 {
-            self.viewport.selected = self.cursor;
-            self.viewport.step(vertical, ITEMS);
-            self.cursor = self.viewport.selected;
+            let next = self.cursor as i32 + vertical;
+            if !(0..ITEMS as i32).contains(&next) {
+                self.tabs_focused = true;
+                self.secret = 0;
+            } else {
+                self.select(next as usize);
+            }
+            // Moving between rows must not change a value on the same frame.
+            return;
         }
         // $FF9C10: A +1, else B -1, else Left/Right.
         let delta = if input.pressed(Button::Ninjutsu) {
@@ -387,7 +472,12 @@ impl OptionsScreen {
                     self.secret = 0;
                 }
                 let options = &mut self.screen.front.options;
-                options.shurikens = (i32::from(options.shurikens) + delta).rem_euclid(9) as u8;
+                let order = SHURIKEN_ORDER
+                    .iter()
+                    .position(|&index| index == options.shurikens)
+                    .unwrap_or(0);
+                let order = (order as i32 + delta).rem_euclid(SHURIKEN_ORDER.len() as i32);
+                options.shurikens = SHURIKEN_ORDER[order as usize];
             }
             CONTROL => {
                 options.control = (i32::from(options.control) + delta).rem_euclid(6) as u8;
@@ -397,22 +487,29 @@ impl OptionsScreen {
                     let command = Table::Music.command(&rom, self.music as u8).ok();
                     self.screen.audio.request(command);
                     self.check_sequence(command);
+                    self.feedback = format!("LAST PLAYED: MUSIC {:02}", self.music);
                 } else if input.pressed(Button::Jump) {
                     self.screen.audio.push(STOP_ALL);
+                    self.feedback = "SOUND TEST STOPPED".into();
                 } else if input.pressed(Button::Ninjutsu) {
                     self.screen.audio.push(FADE_MUSIC);
+                    self.feedback = "MUSIC FADING OUT".into();
                 }
-                let step = self.repeat_x(input);
+                let step = i32::from(input.pressed(Button::Right))
+                    - i32::from(input.pressed(Button::Left));
                 self.music = self.step_sound(MUSIC_TABLE, MUSIC_COUNT, self.music, step);
             }
             SE => {
                 if input.pressed(Button::Attack) {
                     let command = self.effect_command();
                     self.screen.audio.request(command);
+                    self.feedback = format!("LAST PLAYED: S.E. {:02}", self.effect);
                 } else if input.pressed(Button::Jump) {
                     self.screen.audio.push(STOP_EFFECTS);
+                    self.feedback = "EFFECTS AND VOICES STOPPED".into();
                 }
-                let step = self.repeat_x(input);
+                let step = i32::from(input.pressed(Button::Right))
+                    - i32::from(input.pressed(Button::Left));
                 self.effect = self.step_sound(
                     EFFECT_TABLE,
                     EFFECT_COUNT + self.extra_effects.len() as i32,
@@ -425,8 +522,13 @@ impl OptionsScreen {
                     self.screen
                         .audio
                         .request(Table::Voice.command(&rom, self.voice as u8).ok());
+                    self.feedback = format!("LAST PLAYED: VOICE {:02}", self.voice);
+                } else if input.pressed(Button::Jump) {
+                    self.screen.audio.push(STOP_EFFECTS);
+                    self.feedback = "EFFECTS AND VOICES STOPPED".into();
                 }
-                let step = self.repeat_x(input);
+                let step = i32::from(input.pressed(Button::Right))
+                    - i32::from(input.pressed(Button::Left));
                 self.voice = self.step_sound(VOICE_TABLE, VOICE_COUNT, self.voice, step);
             }
             EXIT if [
@@ -470,6 +572,78 @@ impl OptionsScreen {
             self.screen.leave(Next::Title);
         }
     }
+    /// The expanded diagram is part of Controls for hover, but is read-only.
+    fn hit(&self, x: i32, y: i32) -> Option<usize> {
+        if !(24..304).contains(&x) {
+            return None;
+        }
+        (0..ITEMS).find(|&item| {
+            let height = if item == CONTROL { 64 } else { ROW_HEIGHT };
+            (ROW_TOPS[item]..ROW_TOPS[item] + height).contains(&y)
+        })
+    }
+    fn draw_text(&self, frame: &mut Frame, x: i32, y: i32, text: &str, color: Color) {
+        let font = &self.screen.front.font;
+        for (i, byte) in text.bytes().enumerate() {
+            let x = x + i as i32 * 8;
+            if byte == b'%' {
+                // The cartridge map has no percentage sign.
+                frame.rect(x, y, 2, 2, color);
+                frame.rect(x + 5, y + 5, 2, 2, color);
+                for step in 0..7 {
+                    frame.pixel(x + 6 - step, y + step, color);
+                }
+            } else {
+                font.draw_tile(frame, font.tile(byte), x, y, Style::plain(color, 1));
+            }
+        }
+    }
+    fn arrow(&self, frame: &mut Frame, x: i32, y: i32, right: bool, color: Color) {
+        for line in 0..4 {
+            frame.rect(
+                x + if right { line } else { 3 - line },
+                y + line,
+                1,
+                8 - line * 2,
+                color,
+            );
+        }
+    }
+    fn control_diagram(&self) -> [String; 7] {
+        let control = self.options().control;
+        if control < 4 {
+            let action = |line| {
+                let order = CONTROL_ORDER + usize::from(control) * 4 + line;
+                self.text(CONTROL_NAMES + usize::from(byte(self.rom(), order)), 8)
+                    .trim()
+                    .to_string()
+            };
+            [
+                format!("A:{}", action(0)),
+                format!("B:{}", action(1)),
+                format!("C:{}", action(2)),
+                "START:PAUSE".into(),
+                String::new(),
+                String::new(),
+                String::new(),
+            ]
+        } else {
+            [
+                if control == 4 {
+                    "A:GUARD"
+                } else {
+                    "A:NINJUTSU"
+                }
+                .into(),
+                "B:MELEE".into(),
+                "C:JUMP".into(),
+                "X:THROW".into(),
+                if control == 4 { "Y:THROW" } else { "Y:GUARD" }.into(),
+                "Z:NINJUTSU".into(),
+                "MODE:CYCLE  START:PAUSE".into(),
+            ]
+        }
+    }
     fn text(&self, address: usize, length: usize) -> String {
         self.rom()
             .get(address..address + length)
@@ -497,8 +671,7 @@ impl OptionsScreen {
     }
 }
 impl Mode for OptionsScreen {
-    fn tick(&mut self, mut input: Input) -> Option<ModeChange> {
-        input.pressed |= std::mem::take(&mut self.pointer_input).pressed;
+    fn tick(&mut self, input: Input) -> Option<ModeChange> {
         if let Some(change) = self.screen.step() {
             return Some(change);
         }
@@ -511,25 +684,28 @@ impl Mode for OptionsScreen {
             return None;
         }
         if self.screen.faded_in() {
+            let input = self.repeat_input(input);
             self.menu(input);
         }
         None
     }
     fn draw(&self, frame: &mut Frame) {
+        frame.center_content();
         if let Some(art) = &self.art {
-            art.vdp.render(frame, self.screen.fade);
+            art.vdp.render(frame, Fade::In(FADE_STEPS));
         } else {
             frame.clear([0; 3]);
         }
-        let font = &self.screen.front.font;
-        frame.rect(16, 16, 288, 28, [8, 12, 24]);
-        font.draw_text(
-            frame,
-            24,
-            24,
-            "OPTIONS",
-            crate::text::Style::plain([255, 210, 100], 1),
-        );
+        // Keep the ROM artwork at the edges, with solid backing for every glyph.
+        frame.rect(16, 8, 288, 212, PANEL);
+        self.draw_text(frame, 24, 16, "OPTIONS", GOLD);
+        self.draw_tabs(frame);
+        frame.rect(24, 29, 272, 1, FOCUS);
+        if self.display_page {
+            self.draw_display(frame);
+            frame.fade(self.screen.fade);
+            return;
+        }
         let options = self.options();
         let ammo = if options.shurikens_disabled() {
             "DISABLE".into()
@@ -538,100 +714,165 @@ impl Mode for OptionsScreen {
         } else {
             options.start_ammo(self.rom()).to_string()
         };
-        let rows = vec![
-            format!("LEVEL       < {} >", options.level_name(self.rom()).trim()),
-            format!("SHURIKENS   < {ammo} >"),
+        let values = [
+            options.level_name(self.rom()).trim().to_string(),
+            ammo,
+            CONTROL_SCHEMES[usize::from(options.control.min(5))].into(),
             format!(
-                "CONTROLS    < {} >",
-                CONTROL_SCHEMES[usize::from(options.control.min(5))]
-            ),
-            format!(
-                "MUSIC <{}> {}",
+                "{:02} {}",
                 self.music,
                 self.sound_name(MUSIC_TABLE, self.music).trim()
             ),
             format!(
-                "S.E.  <{}> {}",
+                "{:02} {}",
                 self.effect,
                 self.sound_name(EFFECT_TABLE, self.effect).trim()
             ),
             format!(
-                "VOICE <{}> {}",
+                "{:02} {}",
                 self.voice,
                 self.sound_name(VOICE_TABLE, self.voice).trim()
             ),
-            "BACK".into(),
+            String::new(),
         ];
-        self.viewport.draw(frame, font, &rows);
-        frame.rect(16, 192, 288, 32, [8, 12, 24]);
-        let style = crate::text::Style::plain([220, 224, 232], 1);
-        if self.cursor == CONTROL && options.control >= 4 {
-            let label = if options.control == 4 {
-                "A GUARD B MELEE C JUMP"
-            } else {
-                "A JITSU B MELEE C JUMP"
-            };
-            font.draw_text(frame, 24, 196, label, style);
-            font.draw_text(
-                frame,
-                24,
-                208,
-                if options.control == 4 {
-                    "X/Y THROW Z JITSU MODE CYCLE"
-                } else {
-                    "X THROW Y GUARD Z JITSU"
-                },
-                style,
-            );
-        } else {
-            font.draw_text(frame, 24, 196, "LEFT/RIGHT: CHANGE  START: BACK", style);
-            font.draw_text(frame, 24, 208, "F1: REMAP  SOUND: B PLAY C STOP", style);
+        for item in 0..ITEMS {
+            let top = ROW_TOPS[item];
+            let selected = item == self.cursor && !self.tabs_focused;
+            if selected {
+                frame.rect(24, top, 280, ROW_HEIGHT, FOCUS);
+                frame.rect(24, top + 2, 2, ROW_HEIGHT - 4, GOLD);
+            }
+            let color = if selected { GOLD } else { WHITE };
+            self.draw_text(frame, 32, top + 4, LABELS[item], color);
+            if item != EXIT {
+                self.arrow(frame, 130, top + 4, false, color);
+                self.draw_text(frame, VALUE_X, top + 4, &values[item], color);
+                self.arrow(frame, 290, top + 4, true, color);
+            }
         }
+        frame.rect(24, 82, 280, 46, [16, 22, 38]);
+        let diagram = self.control_diagram();
+        for (i, action) in diagram.iter().take(6).enumerate() {
+            self.draw_text(
+                frame,
+                40 + (i / 3) as i32 * 128,
+                84 + (i % 3) as i32 * 12,
+                action,
+                MUTED,
+            );
+        }
+        self.draw_text(frame, 40, 120, &diagram[6], MUTED);
+        frame.rect(24, 196, 272, 1, FOCUS);
+        let sound = matches!(self.cursor, MUSIC | SE | VOICE);
+        let help = if self.tabs_focused {
+            "LEFT/RIGHT:TABS DOWN:OPTIONS"
+        } else if sound {
+            "L/R:SELECT B:PLAY C/RMB:STOP"
+        } else if self.cursor == EXIT {
+            "ENTER / START: BACK"
+        } else {
+            "L/R:CHANGE X/Y:TABS START:BACK"
+        };
+        self.draw_text(frame, 24, 200, help, WHITE);
+        let detail = if sound && !self.feedback.is_empty() {
+            self.feedback.as_str()
+        } else {
+            match self.cursor {
+                LEVEL | EXIT => "APPLIES TO YOUR NEXT NEW GAME",
+                SHURIKINS if options.shurikens_disabled() => "MELEE ONLY / NO AMMO PICKUPS",
+                SHURIKINS if !options.infinite && options.start_ammo(self.rom()) == 0 => {
+                    "START EMPTY / AMMO PICKUPS ON"
+                }
+                SHURIKINS => "STARTING AND RESPAWN AMMO",
+                CONTROL => "F1: CONTROLS / REBIND INPUTS",
+                MUSIC => "A:FADE  CLICK MUSIC:PLAY",
+                SE => "CLICK S.E.:PLAY  START:BACK",
+                VOICE => "CLICK VOICE:PLAY START:BACK",
+                _ => "",
+            }
+        };
+        self.draw_text(frame, 24, 212, detail, MUTED);
+        // Fade the entire UI together, including the fallback without artwork.
+        frame.fade(self.screen.fade);
     }
     fn options(&self) -> Option<GameOptions> {
         Some(self.screen.front.options)
     }
     fn set_options(&mut self, options: GameOptions) {
+        self.secret = 0;
         self.screen.front.options = options;
     }
+    fn display_context(&mut self, settings: DisplaySettings, error: Option<&str>) {
+        if !self.display_changed {
+            self.display = settings;
+        }
+        self.display_available = true;
+        self.crt_error = error.map(str::to_owned);
+    }
+    fn take_display_settings(&mut self) -> Option<DisplaySettings> {
+        std::mem::take(&mut self.display_changed).then_some(self.display)
+    }
     fn menu_event(&mut self, event: MenuEvent) {
+        if matches!(event, MenuEvent::Back) {
+            self.exit();
+            return;
+        }
         if !self.screen.faded_in() || self.screen.leaving() {
+            return;
+        }
+        if let MenuEvent::Hover(x, y) | MenuEvent::Click(x, y, _) = event
+            && (12..28).contains(&y)
+            && ((112..176).contains(&x) || (184..296).contains(&x))
+        {
+            self.tabs_focused = true;
+            self.secret = 0;
+            self.repeat = 0;
+            if matches!(event, MenuEvent::Click(_, _, false)) {
+                self.change_page(x >= 184);
+            }
+            return;
+        }
+        if self.display_page {
+            self.display_event(event);
             return;
         }
         match event {
             MenuEvent::Back => self.exit(),
             MenuEvent::Scroll(delta) => {
-                self.viewport.scroll(delta, ITEMS);
-                self.cursor = self.viewport.selected;
+                self.tabs_focused = false;
+                self.repeat = 0;
+                self.select(
+                    (self.cursor as i64 + i64::from(delta)).clamp(0, ITEMS as i64 - 1) as usize,
+                );
             }
             MenuEvent::Hover(x, y) | MenuEvent::Click(x, y, _) => {
-                if let Some(row) = self.viewport.hit(x, y, ITEMS) {
-                    self.cursor = row;
-                    self.viewport.selected = row;
+                if let Some(row) = self.hit(x, y) {
+                    self.tabs_focused = false;
+                    self.repeat = 0;
+                    self.select(row);
                     if let MenuEvent::Click(_, _, alternate) = event {
+                        if y >= ROW_TOPS[row] + ROW_HEIGHT {
+                            return;
+                        }
                         let button = match row {
                             EXIT => Button::Start,
-                            MUSIC | SE | VOICE if x < 112 => {
-                                if alternate {
-                                    Button::Jump
-                                } else {
-                                    Button::Attack
-                                }
-                            }
-                            _ => {
-                                if x < 180 || alternate {
-                                    Button::Left
-                                } else {
-                                    Button::Right
-                                }
-                            }
+                            MUSIC | SE | VOICE if alternate => Button::Jump,
+                            MUSIC | SE | VOICE if x < 120 => Button::Attack,
+                            _ if x < VALUE_MIDDLE || alternate => Button::Left,
+                            _ => Button::Right,
                         };
-                        self.pointer_input.pressed |= button.mask();
+                        // Apply the click to its own row now. Subsequent mouse
+                        // motion or another click can arrive before the next tick.
+                        self.menu(Input {
+                            held: 0,
+                            pressed: button.mask(),
+                        });
                     }
                 }
             }
         }
     }
+
     fn name(&self) -> &'static str {
         "Options"
     }
@@ -639,6 +880,9 @@ impl Mode for OptionsScreen {
         std::mem::take(&mut self.screen.audio)
     }
 }
+
+#[cfg(test)]
+mod screen_tests;
 
 #[cfg(test)]
 mod control_tests {
@@ -729,10 +973,10 @@ mod sound_list_tests {
             options.tick(crate::input::press(Button::Right));
             assert_eq!(options.effect, 0);
             options.effect = 66;
-            options.menu_event(MenuEvent::Click(80, 145, false));
+            options.menu_event(MenuEvent::Click(80, 156, false));
             options.tick(Input::default());
             assert_eq!(options.take_audio().commands, [0xab]);
-            options.menu_event(MenuEvent::Click(80, 145, true));
+            options.menu_event(MenuEvent::Click(80, 156, true));
             options.tick(Input::default());
             assert_eq!(options.take_audio().commands, [STOP_EFFECTS]);
         }

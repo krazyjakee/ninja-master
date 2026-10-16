@@ -58,11 +58,16 @@ const PULSE_COLOR: usize = 27;
 /// `Title_Menu`'s cursor sprite: Y `$109` + 16 per item, 2 x 1 cells,
 /// tile `$68` with priority, X `$98`.
 const TITLE_CURSOR: [u16; 4] = [0x109, 0x0401, 0x8068, 0x98];
-/// Native: the menu is drawn this many plane rows below `MENU`'s row 17,
-/// clear of the logo, and gains a QUIT item two rows under OPTIONS.
-pub const MENU_DROP: usize = 1;
 pub const MENU_ITEMS: usize = 3;
-const QUIT_ITEM: &[u8] = b" QUIT";
+pub const MENU_VISIBLE: usize = 3;
+
+/// Centre the text between the logo's bottom (128) and the copyright (200).
+/// Rows retain the cartridge's sixteen-pixel spacing and eight-pixel glyphs.
+pub const fn menu_top(visible: usize) -> i32 {
+    (128 + 200 - ((visible as i32 - 1) * 16 + 8)) / 2
+}
+/// Native scroll chevrons use the menu font's colour and palette fade.
+const SCROLL_TILE: usize = 0x440;
 /// `Options_Menu`'s cursor: Y `$A9` + `Data_008A2E[item]`, tile `$68` in
 /// line 3, X `$A8`.
 const OPTIONS_CURSOR: [u16; 4] = [0xa9, 0x0401, 0xe068, 0xa8];
@@ -314,30 +319,74 @@ impl TitleArt {
         vdp.cram[PULSE_COLOR] = self.pulse[(frame_counter as usize & 0x1e) / 2];
     }
 
-    /// `Title_PressStart` on input: PRESS START is blanked and the menu
-    /// drawn, `MENU_DROP` rows lower and with the native QUIT row.
+    /// The original menu, with the native quit entry.
     pub fn show_menu(&mut self, rom: &[u8]) -> Result<()> {
+        self.scrolling_menu(rom, &["NEW GAME", "OPTIONS", "QUIT"], 0, MENU_ITEMS, 0)
+    }
+
+    /// Extend the cartridge's plane text and cursor with a scrolling window.
+    pub fn scrolling_menu(
+        &mut self,
+        rom: &[u8],
+        rows: &[&str],
+        first: usize,
+        visible: usize,
+        selected: usize,
+    ) -> Result<()> {
+        let visible = visible.max(1);
         self.text(rom, BLANK)?;
-        let (address, base, width, height) = map_header(rom, MENU)?;
-        let text = rom
-            .get(MENU + 10..MENU + 10 + width * height)
-            .ok_or_else(|| format!("text ${MENU:05x} truncated"))?;
-        let mut rows: Vec<Vec<u8>> = text.chunks(width).map(<[u8]>::to_vec).collect();
-        let mut quit = vec![b' '; width];
-        quit[..QUIT_ITEM.len()].copy_from_slice(QUIT_ITEM);
-        rows.extend([vec![b' '; width], quit]);
-        let address = address + MENU_DROP * PLANE_ROW_BYTES;
-        for (i, row) in rows.iter().enumerate() {
-            self.write_text(address + i * PLANE_ROW_BYTES, row, base);
+        let (address, base, width, _) = map_header(rom, MENU)?;
+        let top = menu_top(visible);
+        // Keep the longest label clear of Musashi's arm. Only the menu's
+        // plane-A scanlines move; the picture and copyright retain their scroll.
+        for line in &mut self.vdp.hscroll[top as usize..top as usize + visible * 16] {
+            line[0] = 0;
+        }
+        let column = (address - self.vdp.plane_a) % PLANE_ROW_BYTES;
+        let address = self.vdp.plane_a + top as usize / 8 * PLANE_ROW_BYTES + column;
+        let blank = vec![b' '; width];
+        for row in 0..visible * 2 - 1 {
+            self.write_text(address + row * PLANE_ROW_BYTES, &blank, base);
+        }
+        for (row, text) in rows.iter().skip(first).take(visible).enumerate() {
+            let label = format!(" {text}");
+            self.write_text(address + row * 2 * PLANE_ROW_BYTES, label.as_bytes(), base);
+        }
+        self.title_cursor(selected.saturating_sub(first), top);
+        // Small chevrons beside the original cursor show hidden entries.
+        let mut arrows = [0u8; 64];
+        for (tile, lines) in [[0x10, 0x38, 0x7c], [0x7c, 0x38, 0x10]].iter().enumerate() {
+            for (row, bits) in lines.iter().enumerate() {
+                for x in 0..8 {
+                    if bits & (0x80 >> x) != 0 {
+                        arrows[tile * 32 + (row + 2) * 4 + x / 2] |=
+                            0x0b << if x % 2 == 0 { 4 } else { 0 };
+                    }
+                }
+            }
+        }
+        self.vdp.write_tiles(SCROLL_TILE, &arrows);
+        for (row, hidden, tile) in [
+            (0, first > 0, SCROLL_TILE),
+            (
+                (visible - 1) * 2,
+                first + visible < rows.len(),
+                SCROLL_TILE + 1,
+            ),
+        ] {
+            self.vdp.write_word(
+                address - 6 + row * PLANE_ROW_BYTES,
+                if hidden { tile as u16 | base } else { 0 },
+            );
         }
         Ok(())
     }
 
     /// `Title_Menu`: sprite 0 is the cursor.
-    pub fn title_cursor(&mut self, item: usize) {
+    pub fn title_cursor(&mut self, item: usize, top: i32) {
         let [y, size, tile, x] = TITLE_CURSOR;
-        let y = y + 8 * MENU_DROP as u16 + 16 * item as u16;
-        self.vdp.sprites[0] = [y, size, tile, x];
+        let y = (i32::from(y) + top - 136) as u16 + 16 * item as u16;
+        self.vdp.sprites[0] = [y, size, tile, x - TITLE_SCROLL as u16];
     }
 
     /// `Options_Menu`: sprite 0 is the cursor, beside the item's row.

@@ -114,6 +114,15 @@ fn notification_queue_displays_every_unlock_for_four_seconds() {
     p.observe(&run);
     p.tick();
     assert_eq!(p.notices.front(), Some(&0));
+    for _ in 0..600 {
+        p.tick_without_notices();
+    }
+    assert_eq!(p.notices.front(), Some(&0));
+    assert_eq!(
+        p.notice_ticks, 240,
+        "profile browsing pauses the popup timer"
+    );
+    assert_eq!(p.last_flush, 1, "persistence still advances while browsing");
     for _ in 0..239 {
         p.tick();
     }

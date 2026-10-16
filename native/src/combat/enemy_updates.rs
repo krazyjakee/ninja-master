@@ -181,7 +181,7 @@ impl Combat {
             return;
         }
         enemy.spark_handled = false;
-        let response = roster.hit(spawn.kind, enemy);
+        let response = roster.hit_by(spawn.kind, enemy, damage);
         match response {
             HitResponse::Pass
             | HitResponse::Ignore

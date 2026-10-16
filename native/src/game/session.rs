@@ -26,6 +26,7 @@ impl Game {
     pub fn load_next(&self, next: StageId) -> Result<Self, String> {
         let mut game = Self::load_stage(&self.rom, next)?;
         game.run = self.run.clone();
+        game.practice = self.practice.clone();
         game.run.clear_recorded = false;
         if next.round != self.stage_id.round {
             game.run.round_ticks = 0;
@@ -50,6 +51,7 @@ impl Game {
             }
         }
         game.sync_shurikens();
+        game.clear_explore_enemies();
         Ok(game)
     }
     /// Direct `Mode_Game` state `$20` without the mode layer (tests and
@@ -102,7 +104,7 @@ impl Game {
     pub fn start_session(&mut self, options: crate::options::GameOptions) {
         self.run = crate::profile::Run {
             level: options.level,
-            practice: options.infinite || options.invincible || options.shurikens_disabled(),
+            practice: options.infinite || options.invincible,
             initial_ammo: options.start_ammo(&self.rom),
             round_start_ammo: options.start_ammo(&self.rom),
             ..Default::default()
@@ -230,6 +232,7 @@ impl Game {
             &self.sections[self.part()],
             &mut self.player,
         );
+        self.clear_explore_enemies();
         self.enter_markers();
         self.background = BackgroundY::at(self.player.camera_y);
         self.sync_stage_camera();
@@ -251,9 +254,14 @@ impl Game {
         let assets = self.pending_stages[part].take().unwrap_or_else(|| {
             StageAssets::load_stage(&self.rom, id).expect("previously validated section")
         });
-        let combat = self.pending_combat[part].take().unwrap_or_else(|| {
+        let mut combat = self.pending_combat[part].take().unwrap_or_else(|| {
             Combat::load_stage(&self.rom, id).expect("previously validated section combat")
         });
+        if self.exploring() {
+            combat
+                .enemies
+                .retain(|e| combat.spawns[e.spawn].kind == 0x40);
+        }
         (assets, combat)
     }
     /// `Mode_Game` state `$20` for `REQUEST_PART_LOAD` after its fade out:

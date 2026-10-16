@@ -17,6 +17,39 @@ impl Mode for Game {
     /// (`Game_Flags` bit 1). The pad goes through the options' control type
     /// first (`Player_ReadInput`, `$3AC6`).
     fn tick(&mut self, input: Input) -> Option<ModeChange> {
+        if self.practice.is_some() {
+            if self.requests & REQUEST_NEXT_SUBSTAGE != 0 {
+                return self.finish_practice(true);
+            }
+            if self.requests & REQUEST_LIFE_LOST != 0 || self.combat.game_over {
+                return self.finish_practice(false);
+            }
+        }
+        let change = self.tick_play(input);
+        self.record_practice_frame();
+        change
+    }
+    fn draw(&self, frame: &mut Frame) {
+        Game::draw(self, frame);
+    }
+    fn name(&self) -> &'static str {
+        "Game"
+    }
+    fn take_audio(&mut self) -> Audio {
+        let mut commands: Vec<u8> = self.take_music().into_iter().collect();
+        commands.append(&mut self.cues);
+        Audio { commands }
+    }
+    fn game(&self) -> Option<&Game> {
+        Some(self)
+    }
+    fn game_mut(&mut self) -> Option<&mut Game> {
+        Some(self)
+    }
+}
+
+impl Game {
+    fn tick_play(&mut self, input: Input) -> Option<ModeChange> {
         if self.requests & REQUEST_NEXT_SUBSTAGE != 0 && !self.complete {
             return Some(ModeChange::Suspend(StageClear::suspend));
         }
@@ -68,24 +101,5 @@ impl Mode for Game {
         }
         self.lost_fade = Some(Fade::Out(1));
         None
-    }
-    fn draw(&self, frame: &mut Frame) {
-        Game::draw(self, frame);
-    }
-    fn name(&self) -> &'static str {
-        "Game"
-    }
-    fn take_audio(&mut self) -> Audio {
-        // A music change goes first: starting music stops effects, so the
-        // effects requested alongside it still play.
-        let mut commands: Vec<u8> = self.take_music().into_iter().collect();
-        commands.append(&mut self.cues);
-        Audio { commands }
-    }
-    fn game(&self) -> Option<&Game> {
-        Some(self)
-    }
-    fn game_mut(&mut self) -> Option<&mut Game> {
-        Some(self)
     }
 }

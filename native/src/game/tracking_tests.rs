@@ -238,3 +238,37 @@ fn event_counters_survive_death_continue_and_part_and_round_loads() {
     assert_eq!(game.run.stats.melee_hits, 1);
     assert_eq!(game.run.stats.enemies, 1);
 }
+
+#[test]
+#[ignore = "requires a user-supplied cartridge"]
+fn disabled_shurikens_allows_round_achievements_but_cheats_still_block_them() {
+    let rom = cartridge("us");
+    for (infinite, invincible) in [(false, false), (true, false), (false, true)] {
+        let mut game = Game::load_stage(&rom, StageId::new(1, 3, 0)).unwrap();
+        game.start_session(crate::options::GameOptions {
+            shurikens: crate::options::DISABLED_SHURIKENS,
+            infinite,
+            invincible,
+            ..Default::default()
+        });
+        let mut profile = crate::profile::Profile::default();
+        profile.begin(&mut game.run);
+        game.track_begin();
+        assert_eq!(game.run.practice, infinite || invincible);
+        assert_eq!(game.ammo(), 0);
+        game.requests = REQUEST_NEXT_SUBSTAGE;
+        game.track_end();
+        assert_eq!(game.run.cleared, 1);
+        assert_eq!(game.run.stats.rounds, 1);
+        profile.observe(&game.run);
+        assert_eq!(
+            profile.data.unlocked.contains_key(&0),
+            !infinite && !invincible
+        );
+        assert_eq!(
+            game.run.candidates & (1 << 33),
+            0,
+            "Hold Your Fire requires starting ammunition"
+        );
+    }
+}

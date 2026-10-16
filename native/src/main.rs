@@ -245,7 +245,7 @@ fn run() -> Result<(), String> {
                     Play continues through substage and round transitions (1-1 -> 1-2 ...), with ROUND CLEAR and the round card between rounds.\n\
                     Start (Enter) or Escape pauses: Up/Down/Left/Right select the ninjutsu, Start resumes, B then C quits to the title menu (its QUIT ends the program).\n\
                     Replay: --headless --play --input-script FILE [--trace FILE] [--frames N]\n\
-                    Display: desktop widescreen is on by default (F1 Display to turn off); --widescreen expands headless captures too.\n\
+                    Display: desktop widescreen is on by default (Options > Display to turn off); --widescreen expands headless captures too.\n\
                     Sound demo: --sound [--scripted] [--headless --frames N --wav FILE] (X plays an effect)\n\
                     Isolated cue (sound-test comparison): --headless --sound --sound-cue HEX [--stem mix|fm|psg] [--frames N] --wav FILE\n\
                     Asset viewer: --assets [--rom FILE] [--view scene|foreground|background|objects|metatiles|palettes]\n\

@@ -7,7 +7,6 @@ impl Game {
         self.run.round_ticks += 1;
         self.run.practice |= self.options.infinite
             || self.options.invincible
-            || self.options.shurikens_disabled()
             || self.options.level != self.run.level;
         if self.run.encounter.is_none() && !self.run.encounter_finished && self.death.is_none() {
             let boss = self.combat.enemies.iter().any(|e| {
@@ -76,6 +75,9 @@ impl Game {
         self.track_thresholds();
         if next && !self.run.clear_recorded {
             self.run.clear_recorded = true;
+            self.run
+                .completed_stages
+                .insert(crate::practice::stage_key(self.stage_id));
             if self
                 .next_stage()
                 .is_none_or(|id| id.round != self.stage_id.round)

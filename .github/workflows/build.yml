@@ -109,6 +109,9 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo fmt --manifest-path native/Cargo.toml --check
       - name: Test
+        env:
+          # Test binaries run before the app bundles its SDL2 framework.
+          DYLD_FRAMEWORK_PATH: ${{ env.SDL2_ROOT }}
         run: cargo test --locked --manifest-path native/Cargo.toml
       - name: Test rendering, capture and fullscreen recovery
         if: runner.os == 'Linux'

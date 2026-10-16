@@ -214,7 +214,11 @@ impl Mode for Pause {
             Stage::Closing(rows) => self.stage = Stage::Closing(rows - 1),
             Stage::Leaving(step) if step < FADE_STEPS => self.stage = Stage::Leaving(step + 1),
             Stage::Leaving(_) => {
-                let game = held_game(&self.saved)?;
+                let game = held_game_mut(&mut self.saved)?;
+                if game.practice.is_some() {
+                    self.audio.push(STOP_SOUND);
+                    return game.finish_practice(false);
+                }
                 let title = Title::menu(Front::from_game(game));
                 self.audio.push(STOP_SOUND);
                 return Some(ModeChange::Replace(Box::new(title)));

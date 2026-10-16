@@ -19,6 +19,100 @@ impl Terrain for Floor {
 }
 #[test]
 #[ignore = "requires the three user-supplied cartridges"]
+fn leader_entrance_pan_advances_the_displayed_walk_cycle_before_the_clamp() {
+    for region in ["us", "eu", "jp"] {
+        let rom = cartridge(region);
+        let mut game = Game::load_stage(&rom, StageId::new(1, 1, 2)).unwrap();
+        game.options.invincible = true;
+        game.player.x = 1740 * 256;
+        game.player.camera_x = 1580;
+        Mode::tick(&mut game, Input::default());
+        assert!(game.arena.is_some());
+        let mut frames = std::collections::BTreeSet::new();
+        let mut sprites = std::collections::BTreeSet::new();
+        let palettes = game.stage.assets.palettes;
+        let mut walking = 0;
+        let mut saw_gate_drop = false;
+        for tick in 0..220 {
+            let panning = !game.arena.as_ref().unwrap().settled;
+            let before = game.player.position();
+            Mode::tick(&mut game, Input::default());
+            if panning {
+                assert_eq!(
+                    game.player.animator.state,
+                    crate::movement::state::WALK,
+                    "{region}: idle sliding during entrance pan, tick {tick}"
+                );
+                assert!(game.player.position().0 > before.0);
+                assert_eq!(game.player.position().1, 496);
+                if frames.insert(game.player.display_frame()) {
+                    // Draw the real player sprite at a fixed anchor with
+                    // a fixed palette, so camera/palette changes cannot
+                    // make a static pose pass this visual check.
+                    let mut frame = Frame::default();
+                    game.draw_player(
+                        &mut frame,
+                        &crate::render::cram_lines(&palettes),
+                        (game.player.position().0 - 160, 496 - 200),
+                    );
+                    sprites.insert(frame.rgb().to_vec());
+                }
+                walking += 1;
+            }
+            saw_gate_drop |= game
+                .combat
+                .effects
+                .iter()
+                .any(|e| e.kind == crate::combat::EffectKind::Gate && e.phase == 1);
+        }
+        assert!(walking >= 30);
+        assert!(
+            frames.len() >= 5,
+            "{region}: walking must change the displayed frame: {frames:?}"
+        );
+        assert!(
+            sprites.len() >= 5,
+            "{region}: walking must change the rendered sprite"
+        );
+        assert!(saw_gate_drop);
+    }
+}
+#[test]
+#[ignore = "requires the three user-supplied cartridges"]
+fn cave_boss_takes_eight_damage_once_from_each_actual_ninjutsu_cast() {
+    use crate::ninjutsu::{Cast, Kind};
+    for region in ["us", "eu", "jp"] {
+        let rom = cartridge(region);
+        for (kind, cursor) in [(Kind::Kariu, 0x0d00), (Kind::Mijin, 0x1400)] {
+            let mut game = Game::load_stage(&rom, StageId::new(1, 3, 0)).unwrap();
+            Mode::tick(&mut game, Input::default());
+            let index = game
+                .combat
+                .enemies
+                .iter()
+                .position(|e| game.combat.spawns[e.spawn].kind == crate::bosses::BOSS_KIND)
+                .unwrap();
+            let enemy = &mut game.combat.enemies[index];
+            enemy.routine = 0x18;
+            enemy.x = 160;
+            enemy.mapping = 0x23d;
+            game.player.animator.state = kind.state();
+            game.player.animator.cursor = cursor;
+            game.cast = Some(Cast::new(kind));
+            Mode::tick(&mut game, Input::default());
+            assert_eq!(game.combat.enemies[index].health, 4, "{region}: {kind:?}");
+            for _ in 0..5 {
+                Mode::tick(&mut game, Input::default());
+            }
+            assert_eq!(
+                game.combat.enemies[index].health, 4,
+                "{region}: repeated {kind:?} hit"
+            );
+        }
+    }
+}
+#[test]
+#[ignore = "requires the three user-supplied cartridges"]
 fn double_jump_matches_original_position_velocity_and_animation_on_every_frame() {
     for region in ["us", "eu", "jp"] {
         let rom = cartridge(region);

@@ -1,4 +1,4 @@
-//! The F1 companion panel: display, controls, audio, saves, gallery, stages and tools.
+//! The F1 companion panel: controls, audio, saves, gallery, stages and tools.
 
 use super::gallery::Gallery;
 use crate::Scene;
@@ -54,9 +54,6 @@ impl Panel {
                 let Some(_tabs) = ui.tab_bar("Companion tabs") else {
                     return;
                 };
-                if let Some(_tab) = ui.tab_item("Display") {
-                    self.display(ui, settings, info.crt_error);
-                }
                 if let Some(_tab) = ui.tab_item("Controls") {
                     self.controls(ui, settings, info, &mut actions);
                 }
@@ -119,90 +116,6 @@ impl Panel {
                 }
             });
         actions
-    }
-
-    fn display(&self, ui: &Ui, settings: &mut Settings, crt_error: Option<&str>) {
-        ui.checkbox("True widescreen", &mut settings.widescreen);
-        help(
-            ui,
-            "Shows more of the stage to fit your window or monitor, including ultrawide displays, with unchanged sprite proportions. Turn off for the original view.",
-        );
-        ui.checkbox("Fullscreen (F11)", &mut settings.fullscreen);
-        let mut scale = settings.scale as i32;
-        if ui.slider(
-            "Window scale",
-            settings::MIN_SCALE as i32,
-            settings::MAX_SCALE as i32,
-            &mut scale,
-        ) {
-            settings.scale = scale as u32;
-        }
-        help(
-            ui,
-            "Sets the window size. Fullscreen uses the desktop resolution.",
-        );
-        if settings.widescreen {
-            ui.text("Aspect ratio: Matches window / monitor");
-        } else {
-            ui.combo_simple_string(
-                "Aspect ratio",
-                &mut settings.aspect,
-                &[
-                    "Native pixels (10:7)",
-                    "Mega Drive display (4:3)",
-                    "Fill window",
-                ],
-            );
-        }
-        ui.checkbox("Integer scaling", &mut settings.integer_scale);
-        help(
-            ui,
-            "Uses whole pixel multiples when they fit. This can leave borders; turn off to fill more of the display.",
-        );
-        ui.checkbox("Smooth wave effects", &mut settings.smooth_wave_effects);
-        help(
-            ui,
-            "Smooths scenery distortion. Turn off for the original stepped waves.",
-        );
-        ui.separator();
-        {
-            let _disabled = ui.begin_disabled(crt_error.is_some());
-            ui.checkbox("CRT shader", &mut settings.crt);
-        }
-        help(
-            ui,
-            "Simulates phosphor beams, an RGB grille, soft glow and curved CRT glass.",
-        );
-        if let Some(error) = crt_error {
-            ui.text_wrapped(error);
-        }
-        if settings.crt && crt_error.is_none() {
-            let mut curvature = i32::from(settings.crt_curvature);
-            if ui.slider("CRT fisheye", 0, 100, &mut curvature) {
-                settings.crt_curvature = curvature as u8;
-            }
-            help(ui, "25 gives a slight curve. Set to 0 for flat glass.");
-        }
-        let mut strength = i32::from(settings.scanlines);
-        if ui.slider("Scanline strength", 0, 100, &mut strength) {
-            settings.scanlines = strength as u8;
-        }
-        help(
-            ui,
-            "Adds darker scanlines. CRT mode uses soft phosphor beams; flat mode darkens alternating rows.",
-        );
-        if ui.button("Restore display defaults") {
-            let defaults = Settings::default();
-            settings.fullscreen = defaults.fullscreen;
-            settings.widescreen = defaults.widescreen;
-            settings.scale = defaults.scale;
-            settings.aspect = defaults.aspect;
-            settings.integer_scale = defaults.integer_scale;
-            settings.smooth_wave_effects = defaults.smooth_wave_effects;
-            settings.scanlines = defaults.scanlines;
-            settings.crt = defaults.crt;
-            settings.crt_curvature = defaults.crt_curvature;
-        }
     }
 
     fn controls(
@@ -500,7 +413,6 @@ pub(super) struct Actions {
 }
 
 pub(super) struct PanelInfo<'a> {
-    pub crt_error: Option<&'a str>,
     pub art_name: &'a str,
     pub art_status: &'a str,
     pub ticks: u64,

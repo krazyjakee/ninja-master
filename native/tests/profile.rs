@@ -45,6 +45,7 @@ fn main_menu_opens_both_profile_screens_and_restores_focus_with_every_input_path
     advance(&mut modes, 100);
     modes.tick(press(Button::Down));
     modes.tick(press(Button::Down));
+    modes.tick(press(Button::Down));
     modes.tick(press(Button::Start));
     advance(&mut modes, 100);
     assert_eq!(modes.name(), "Profile");
@@ -55,7 +56,7 @@ fn main_menu_opens_both_profile_screens_and_restores_focus_with_every_input_path
     modes.draw(&mut frame);
     assert_ne!(first, frame.checksum());
     modes.menu_event(MenuEvent::Scroll(-49));
-    modes.menu_event(MenuEvent::Hover(48, 50));
+    modes.menu_event(MenuEvent::Hover(48, 62));
     modes.draw(&mut frame);
     assert_eq!(first, frame.checksum());
     modes.menu_event(MenuEvent::Click(280, 12, false));
@@ -80,7 +81,7 @@ fn main_menu_opens_both_profile_screens_and_restores_focus_with_every_input_path
     assert_eq!(modes.name(), "Title");
     advance(&mut modes, 100);
     // Mouse reopens the focused, scrolled Statistics row.
-    modes.menu_event(MenuEvent::Click(80, 192, false));
+    modes.menu_event(MenuEvent::Click(80, 181, false));
     modes.tick(Input::default());
     advance(&mut modes, 100);
     assert_eq!(modes.name(), "Profile");
@@ -148,6 +149,50 @@ fn new_game_allocates_a_fresh_eligible_run_and_cheats_stay_practice_after_rewind
     assert!(modes.game().unwrap().run.practice);
     assert_eq!(modes.game().unwrap().run.id, id);
     assert!(!modes.game().unwrap().options.invincible);
+    drop(modes);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+#[ignore = "requires a user-supplied cartridge"]
+fn disabled_shurikens_new_game_and_automatic_continue_remain_eligible() {
+    let rom = rom();
+    let dir = directory("disabled-shurikens");
+    let checkpoint = dir.join("continue.nms");
+    let mut front = Front::load(&rom).unwrap();
+    front.options.shurikens = ninja_master_native::options::DISABLED_SHURIKENS;
+    let mut modes = Modes::new(Box::new(Title::menu(front)));
+    modes.enable_progress(Some(checkpoint.clone()), &rom);
+    advance(&mut modes, 100);
+    modes.tick(press(Button::Start));
+    advance(&mut modes, 100);
+    modes.tick(press(Button::Start));
+    advance(&mut modes, 100);
+    assert_eq!(modes.name(), "Game");
+    let game = modes.game().unwrap();
+    let id = game.run.id;
+    assert!(id > 0);
+    assert!(!game.run.practice);
+    assert!(game.options.shurikens_disabled());
+    assert_eq!(game.ammo(), 0);
+    modes.checkpoint();
+    drop(modes);
+
+    let mut modes = Modes::new(Box::new(Title::menu(Front::load(&rom).unwrap())));
+    modes.enable_progress(Some(checkpoint), &rom);
+    advance(&mut modes, 100);
+    modes.tick(press(Button::Down));
+    modes.tick(press(Button::Start));
+    advance(&mut modes, 16);
+    let game = modes
+        .game()
+        .expect("automatic Continue must restore the disabled-shuriken run");
+    assert_eq!(game.run.id, id);
+    assert!(!game.run.practice);
+    assert!(game.options.shurikens_disabled());
+    assert_eq!(game.ammo(), 0);
+    assert!(!modes.profile.data.tainted.contains(&id));
+    assert!(modes.profile.data.lifetime.ticks > 0);
     drop(modes);
     std::fs::remove_dir_all(dir).unwrap();
 }

@@ -29,7 +29,7 @@ use crate::{
     sound_events::Table,
     story::Story,
     text::Font,
-    title_art::TitleArt,
+    title_art::{MENU_VISIBLE, TitleArt, menu_top},
 };
 
 pub use crate::intro::{INTRO_TICKS, Intro, REVEAL_TICKS, TITLE_FADE_MASK};
@@ -155,6 +155,7 @@ pub enum Next {
     Options,
     Achievements,
     Statistics,
+    Practice,
     /// `Title_ModeGame`: `Mode_Game`, which starts with the round card.
     Game,
     Continue,
@@ -179,6 +180,7 @@ pub fn go(front: &Front, next: Next) -> ModeChange {
         Next::Statistics => {
             return ModeChange::Profile(front, crate::profile::ScreenKind::Statistics);
         }
+        Next::Practice => return ModeChange::Practice(front, None, None, None),
         Next::Game => return ModeChange::NewGame(front),
         Next::Continue => return ModeChange::Continue(front),
         Next::Demo => {
@@ -325,8 +327,8 @@ impl Mode for SegaLogo {
 /// `Mode_Title` (`$774E`) over the title picture (`crate::title_art`).
 pub struct Title {
     screen: Screen,
-    /// The selected visible row: New Game, optional Continue, Options,
-    /// Quit; `None` while PRESS START BUTTON is up.
+    /// The selected item: New Game, optional Continue, Practice, Options,
+    /// Achievements, Statistics or Quit; `None` while PRESS START BUTTON is up.
     pub menu: Option<usize>,
     viewport: Menu,
     confirmation: Option<Menu>,
@@ -384,7 +386,7 @@ impl Title {
         }
         let return_to_menu = screen.front.return_to_menu;
         let mut title = Self {
-            viewport: Menu::new(152, 3, 16),
+            viewport: Menu::new(menu_top(MENU_VISIBLE), MENU_VISIBLE, 16),
             confirmation: None,
             resume_available: false,
             message: String::new(),
@@ -414,14 +416,11 @@ impl Title {
     fn open_menu(&mut self) {
         self.viewport.selected = self.screen.front.title_selection;
         self.viewport.first = self.screen.front.title_first;
-        self.viewport.reveal(6);
+        self.viewport.reveal(7);
         self.menu = Some(self.viewport.selected);
         self.timer = MENU_TICKS;
         if let Some(art) = self.art.as_mut() {
             let _ = art.text(&self.screen.front.rom, crate::title_art::BLANK);
-            // Preserve the cartridge menu's sprite-chain head. The native
-            // panel covers the original cursor while drawing its own focus.
-            art.title_cursor(0);
         }
     }
     fn activate(&mut self) {
@@ -433,23 +432,31 @@ impl Title {
             return;
         }
         match self.viewport.selected {
-            0 if self.resume_available => self.confirmation = Some(Menu::new(168, 2, 16)),
+            0 if self.resume_available => {
+                self.confirmation = Some(Menu::new(menu_top(3) + 16, 2, 16))
+            }
             0 => self.screen.leave(Next::Game),
             1 if self.resume_available => self.screen.leave(Next::Continue),
             item if item == 1 + usize::from(self.resume_available) => {
                 self.screen.front.title_selection = self.viewport.selected;
                 self.screen.front.title_first = self.viewport.first;
                 self.screen.front.return_to_menu = true;
+                self.screen.leave(Next::Practice);
+            }
+            item if item == 2 + usize::from(self.resume_available) => {
+                self.screen.front.title_selection = self.viewport.selected;
+                self.screen.front.title_first = self.viewport.first;
+                self.screen.front.return_to_menu = true;
                 self.screen.leave(Next::Options);
             }
-            item if item == 2 + usize::from(self.resume_available)
-                || item == 3 + usize::from(self.resume_available) =>
+            item if item == 3 + usize::from(self.resume_available)
+                || item == 4 + usize::from(self.resume_available) =>
             {
                 self.screen.front.title_selection = self.viewport.selected;
                 self.screen.front.title_first = self.viewport.first;
                 self.screen.front.return_to_menu = true;
                 self.screen
-                    .leave(if item == 2 + usize::from(self.resume_available) {
+                    .leave(if item == 3 + usize::from(self.resume_available) {
                         Next::Achievements
                     } else {
                         Next::Statistics
@@ -510,7 +517,7 @@ impl Mode for Title {
                     menu.step(step, 2);
                 } else {
                     self.viewport
-                        .step(step, 5 + usize::from(self.resume_available));
+                        .step(step, 6 + usize::from(self.resume_available));
                     self.menu = Some(self.viewport.selected);
                 }
                 if input.pressed(Button::Start)
@@ -530,56 +537,56 @@ impl Mode for Title {
         None
     }
     fn draw(&self, frame: &mut Frame) {
-        match &self.art {
-            Some(art) => {
-                let mut vdp = art.vdp.clone();
-                vdp.cram = self.shown.cram;
-                vdp.sprites = self.shown.sprites;
-                vdp.hscroll.clone_from(&self.shown.hscroll);
-                vdp.render(frame, self.screen.fade);
-            }
-            None => frame.clear([0; 3]),
-        }
+        let Some(art) = &self.art else {
+            frame.clear([0; 3]);
+            return;
+        };
+        let mut art = art.clone();
+        art.vdp.cram = self.shown.cram;
+        art.vdp.sprites = self.shown.sprites;
+        art.vdp.hscroll.clone_from(&self.shown.hscroll);
         if self.menu.is_some() {
-            let font = &self.screen.front.font;
             if let Some(menu) = &self.confirmation {
-                frame.rect(16, 128, 288, 24, [8, 12, 24]);
-                font.draw_text(
-                    frame,
-                    24,
-                    136,
-                    "REPLACE SAVED RUN?",
-                    crate::text::Style::plain([255, 210, 100], 1),
+                let _ = art.scrolling_menu(
+                    &self.screen.front.rom,
+                    &["REPLACE SAVE?", "CANCEL", "NEW GAME"],
+                    0,
+                    3,
+                    menu.selected + 1,
                 );
-                menu.draw(frame, font, &["CANCEL".into(), "START NEW GAME".into()]);
             } else {
-                let mut rows = vec!["NEW GAME".into()];
+                let mut rows = vec!["NEW GAME"];
                 if self.resume_available {
-                    rows.push("CONTINUE".into());
+                    rows.push("CONTINUE");
                 }
-                rows.extend([
-                    "OPTIONS".into(),
-                    "ACHIEVEMENTS".into(),
-                    "STATISTICS".into(),
-                    "QUIT".into(),
-                ]);
-                self.viewport.draw(frame, font, &rows);
-                if !self.message.is_empty() {
-                    let text: String = self.message.chars().take(36).collect();
-                    font.draw_text(
-                        frame,
-                        16,
-                        216,
-                        &text,
-                        crate::text::Style::plain([255, 210, 100], 1),
-                    );
-                }
+                rows.extend(["PRACTICE", "OPTIONS", "ACHIEVEMENTS", "STATISTICS", "QUIT"]);
+                let _ = art.scrolling_menu(
+                    &self.screen.front.rom,
+                    &rows,
+                    self.viewport.first,
+                    self.viewport.visible,
+                    self.viewport.selected,
+                );
             }
+        }
+        art.vdp.render(frame, self.screen.fade);
+        if self.menu.is_some() && self.confirmation.is_none() && !self.message.is_empty() {
+            let text: String = self.message.chars().take(36).collect();
+            self.screen.front.font.draw_text(
+                frame,
+                16,
+                216,
+                &text,
+                crate::text::Style::plain(
+                    crate::render::md_color(WHITE).map(|c| self.screen.fade.channel(c)),
+                    1,
+                ),
+            );
         }
     }
     fn menu_context(&mut self, available: bool, status: &str) {
         self.resume_available = available;
-        self.viewport.reveal(5 + usize::from(available));
+        self.viewport.reveal(6 + usize::from(available));
         if self.menu.is_some() {
             self.menu = Some(self.viewport.selected);
         }
@@ -608,18 +615,27 @@ impl Mode for Title {
             self.pointer_input = Input::default();
             if self.confirmation.take().is_none() {
                 self.menu = None;
+                if let Some(art) = self.art.as_mut() {
+                    let _ = art.text(&self.screen.front.rom, crate::title_art::PRESS_START);
+                }
             }
             return;
         }
         let count = if self.confirmation.is_some() {
             2
         } else {
-            5 + usize::from(self.resume_available)
+            6 + usize::from(self.resume_available)
         };
         let menu = self.confirmation.as_mut().unwrap_or(&mut self.viewport);
         match event {
             MenuEvent::Hover(x, y) | MenuEvent::Click(x, y, _) => {
-                if let Some(row) = menu.hit(x, y, count) {
+                // Translate the pointer with the native menu's horizontal shift.
+                let x = x + i32::from(crate::title_art::TITLE_SCROLL);
+                if let Some(row) = (24..192)
+                    .contains(&x)
+                    .then(|| menu.hit(x, y, count))
+                    .flatten()
+                {
                     menu.selected = row;
                     if matches!(event, MenuEvent::Click(..)) {
                         self.pointer_input.pressed |= Button::Start.mask();

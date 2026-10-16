@@ -182,18 +182,18 @@ fn mouse_options_scroll_and_return_to_main_menu_focus() {
     let rom = cartridge("us");
     let mut title = Title::menu(Front::load(&rom).unwrap());
     settle(&mut title);
-    title.menu_event(MenuEvent::Scroll(1));
-    title.menu_event(MenuEvent::Click(100, 159, false)); // Options is the first row after scrolling.
+    title.menu_event(MenuEvent::Scroll(2));
+    title.menu_event(MenuEvent::Click(100, 149, false)); // Options is the first row after scrolling.
     let mut modes = Modes::new(Box::new(title));
     for _ in 0..100 {
         modes.tick(Input::default());
     }
     assert_eq!(modes.name(), "Options");
-    modes.menu_event(MenuEvent::Click(250, 100, false)); // Change control scheme.
+    modes.menu_event(MenuEvent::Click(292, 72, false)); // Change control scheme.
     modes.tick(Input::default());
     assert_eq!(modes.options().unwrap().control, 1);
     modes.menu_event(MenuEvent::Scroll(10));
-    modes.menu_event(MenuEvent::Click(100, 169, false)); // Back in the final row.
+    modes.menu_event(MenuEvent::Click(100, 188, false)); // Back stays visible for every control scheme.
     for _ in 0..100 {
         modes.tick(Input::default());
     }
@@ -212,6 +212,64 @@ fn mouse_options_scroll_and_return_to_main_menu_focus() {
     assert_eq!(options.cursor, 6);
     options.tick(press(Button::Up));
     assert_eq!(options.cursor, 5);
+}
+
+#[test]
+#[ignore = "requires a user-supplied US retail cartridge"]
+fn original_menu_art_survives_scrolling_control_expansion_and_fades() {
+    let rom = cartridge("us");
+    let mut frame = Frame::default();
+    let mut title = Title::menu(Front::load(&rom).unwrap());
+    settle(&mut title);
+    title.draw(&mut frame);
+    // Visually reviewed cartridge typography, centred menu, cursor and scroll cue.
+    assert_eq!(frame.checksum(), 0x42131cb80da240ce);
+    title.menu_event(MenuEvent::Scroll(100));
+    assert_eq!(title.menu, Some(3));
+    title.tick(press(Button::Down));
+    assert_eq!(title.menu, Some(4)); // Statistics.
+    title.tick(press(Button::Down));
+    assert_eq!(title.menu, Some(5)); // Quit.
+    title.tick(press(Button::Down));
+    assert_eq!(title.menu, Some(0));
+
+    // Closing the native menu must restore the cartridge's PRESS START screen.
+    let mut idle = Title::new(Front::load(&rom).unwrap());
+    settle(&mut idle);
+    let mut reopened = Title::menu(Front::load(&rom).unwrap());
+    settle(&mut reopened);
+    reopened.menu_event(MenuEvent::Back);
+    reopened.draw(&mut frame);
+    let closed = frame.checksum();
+    idle.draw(&mut frame);
+    assert_eq!(closed, frame.checksum());
+
+    let mut options = OptionsScreen::new(Front::load(&rom).unwrap());
+    settle(&mut options);
+    options.draw(&mut frame);
+    // Visually reviewed native font, fixed rows, readable panels and help.
+    assert_eq!(frame.checksum(), 0xdcf6cf574a8e3c27);
+    for scheme in [4, 5] {
+        let mut settings = options.options();
+        settings.control = scheme;
+        options.set_options(settings);
+        options.menu_event(MenuEvent::Hover(80, 120));
+        assert_eq!(options.cursor, 2, "expanded control diagram is one target");
+        options.menu_event(MenuEvent::Hover(80, 140));
+        assert_eq!(options.cursor, 3, "sound rows follow the expanded diagram");
+        options.menu_event(MenuEvent::Scroll(100));
+        assert_eq!(options.cursor, 6);
+        options.cursor = 0;
+        options.menu_event(MenuEvent::Hover(80, 188));
+        assert_eq!(options.cursor, 6, "Back remains visible");
+    }
+    options.menu_event(MenuEvent::Click(80, 188, false));
+    for _ in 0..13 {
+        assert!(options.tick(Input::default()).is_none());
+    }
+    options.draw(&mut frame);
+    assert!(frame.rgb().iter().all(|&channel| channel == 0));
+    assert!(options.tick(Input::default()).is_some());
 }
 
 #[test]
@@ -350,8 +408,8 @@ fn continue_survives_restart_and_new_game_requires_confirmation() {
     for _ in 0..30 {
         modes.tick(Input::default());
     }
-    // With the damaged save rejected, the row after New Game is Options.
-    assert_eq!(modes.name(), "Options");
+    // With the damaged save rejected, the row after New Game is Practice.
+    assert_eq!(modes.name(), "Practice");
     assert!(modes.game().is_none());
     std::fs::remove_dir_all(dir).unwrap();
 }

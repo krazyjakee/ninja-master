@@ -255,17 +255,15 @@ impl Game {
         self.stage.y = camera_y;
         self.stage.background_y = self.background.y;
     }
-    /// A moving arena can catch an idle player before its encounter issues
-    /// a walk event. Give that grounded screen-clamp movement a walking pose.
+    /// Walk during the arena's entry pan, before its encounter issues a
+    /// walk event. Waiting until the left clamp catches Joe leaves him in
+    /// an idle frame while the camera carries him across the screen.
     /// Object events (including walk-out and damage) retain precedence.
     pub(super) fn arena_player_event(&self, event: Option<PlayerEvent>) -> Option<PlayerEvent> {
         event.or_else(|| {
             let arena = self.arena.as_ref()?;
             let exit = self.sections[self.part()].exit.0;
-            (arena.camera_x <= exit
-                && self.player.grounded
-                && self.player.position().0 <= arena.camera_x + 4 + 32)
-                .then_some(PlayerEvent::WalkRight)
+            (arena.camera_x <= exit && self.player.grounded).then_some(PlayerEvent::WalkRight)
         })
     }
     /// The `$AC7C` camera lock: the arena scrolls into place, holds the

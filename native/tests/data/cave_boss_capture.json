@@ -1,0 +1,6 @@
+{
+  "rom_sha1": "1e07d7998e3048fcfba4238ae96496460e91b3a5",
+  "core_sha256": "b7893a77eb166f0f9291af0ad29d8a809555debd02609efce3f7a2db025f99e7",
+  "cases": 70,
+  "routine": "Boss1 $2A518, isolated handler calls"
+}

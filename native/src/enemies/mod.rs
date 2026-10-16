@@ -175,6 +175,16 @@ pub(crate) trait Behavior: Send + Sync {
             HitResponse::Accept
         }
     }
+    /// Attack-specific damage gate; most handlers use the same gate for
+    /// weapons and ninjutsu. Boss1 tests eight-point magic before its guard.
+    fn hit_by(&self, enemy: &Enemy, kind: u16, _damage: u8) -> HitResponse {
+        self.hit(enemy, kind)
+    }
+    /// Boss counters can interpret a ninjutsu object differently from its
+    /// ordinary damage byte (Func_032F00 returns 8 for types >= $50).
+    fn ninjutsu_damage(&self, _kind: u16, damage: u8) -> u8 {
+        damage
+    }
     /// Apply `Object_Integrate` after each update. The forest set steps its
     /// own motion and returns false.
     fn integrates(&self) -> bool {
@@ -264,8 +274,15 @@ impl Roster {
             .map_or(spawn.placeholder_mapping, |b| b.initial_mapping(spawn.kind))
     }
     pub(crate) fn hit(&self, kind: u16, enemy: &Enemy) -> HitResponse {
+        self.hit_by(kind, enemy, 0)
+    }
+    pub(crate) fn ninjutsu_damage(&self, kind: u16, damage: u8) -> u8 {
+        self.get(kind)
+            .map_or(damage, |behavior| behavior.ninjutsu_damage(kind, damage))
+    }
+    pub(crate) fn hit_by(&self, kind: u16, enemy: &Enemy, damage: u8) -> HitResponse {
         let response = match self.get(kind) {
-            Some(behavior) => behavior.hit(enemy, kind),
+            Some(behavior) => behavior.hit_by(enemy, kind, damage),
             // Unported: a hit pauses the placeholder; further hits are spent.
             None if enemy.state == EnemyState::Hurt => HitResponse::Ignore,
             None => HitResponse::Accept,

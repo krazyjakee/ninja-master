@@ -403,7 +403,10 @@ impl Boss1 {
         // The original compares the two tile-word flip bits ($2AB7C).
         if e.facing_left == cx.player_facing_left {
             e.body = Self::grown(cx, e, self.grow.0, self.grow.1);
-            let slash = self.slashing.get(state).copied() == Some(1);
+            // $2ABAC also accepts attack type $4C (the dash kick), which
+            // is absent from the slashing-state table.
+            let slash = self.slashing.get(state).copied() == Some(1)
+                || state == crate::movement::state::DASH_KICK;
             e.vars[GUARD] = if slash { ACCEPT } else { DEFLECT };
         } else {
             e.body = Self::grown(cx, e, 0, self.grow.1);
@@ -850,10 +853,32 @@ impl Behavior for Boss1 {
         self.weapons(cx, e);
     }
     fn hit(&self, enemy: &Enemy, _kind: u16) -> HitResponse {
+        // Func_02AEDE enters HURT immediately. The native framework
+        // defers that dispatch, so block additional objects in this pass.
+        if matches!(enemy.reaction, Some(Reaction::Hurt | Reaction::Death)) {
+            return HitResponse::Pass;
+        }
         match enemy.vars[GUARD] {
             DEFLECT => HitResponse::Deflect,
             ACCEPT => HitResponse::Accept,
             _ => HitResponse::Pass,
         }
+    }
+    fn hit_by(&self, enemy: &Enemy, kind: u16, damage: u8) -> HitResponse {
+        // Func_02AF5A runs before the routine's weapon guard. Its
+        // Func_032F00 result of 8 is Kariu/Mijin and goes straight to
+        // Func_02AEDE, even while Joe's ninjutsu state skips stance_guard.
+        if damage == 8
+            && enemy.routine < CHARGE
+            && enemy.routine != HURT
+            && !matches!(enemy.reaction, Some(Reaction::Hurt | Reaction::Death))
+        {
+            HitResponse::Accept
+        } else {
+            self.hit(enemy, kind)
+        }
+    }
+    fn ninjutsu_damage(&self, _kind: u16, _damage: u8) -> u8 {
+        8 // Func_032F00, independent of the dragon/blast damage byte.
     }
 }

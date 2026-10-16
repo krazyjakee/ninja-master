@@ -33,6 +33,7 @@ pub mod ninjutsu;
 pub mod ninjutsu_fx;
 pub mod options;
 pub mod pause;
+pub mod practice;
 pub mod profile;
 mod progress;
 mod raster;

@@ -3,6 +3,30 @@ Gameplay and fidelity verification (roadmap #2)
 No ROM, disassembly, artwork or audio is included. CSVs contain numeric RAM
 observations only. capture.json identifies the local cartridge and emulator build.
 
+Cave boss damage and forest arena entrance
+Reproduce cave_boss_hits.csv with tools/capture_cave_boss.py using the same
+--core, --rom and --out options below. cave_boss_capture.json identifies this
+capture. Seventy isolated original Boss1 ($2A518) calls cover walk/decision,
+high wind-up/recovery, low attack, guarding stance and charge, with shuriken,
+slash, air stab, dash kick and ninjutsu attacks and both player facings.
+The native damage gates match every row with US, EU and JP cartridges.
+The original deliberately blocks frontal shurikens while walking/charging;
+wind-ups and attacks from behind provide openings. Confirmed omissions were
+the stance's dash-kick exception ($2ABAC, attack type $4C), and the eight-point
+ninjutsu counter rule ($2AF5A/$32F00) before the routine's guard. Kariu/Mijin
+use eight counter points regardless of their ordinary object damage bytes.
+Entering hurt also blocks subsequent objects, including the remaining native
+dragon strikes in the same cast. Real sword-object and Game cast checks cover
+these paths in addition to the numeric gate matrix.
+The leader entrance now requests walking for the whole grounded camera pan.
+The old condition waited for the left clamp to catch Joe, displaying idle
+while the background scrolled. The regression releases all movement input,
+checks walking from the first pan update through camera settlement, and requires
+at least five different displayed frames AND five different rendered player
+sprites at a fixed screen anchor/palette, with the real gate drop running.
+All three regional cartridges pass; the pre-fix camera condition fails on the
+first pan update. The existing broken-opening walk-out check remains separate.
+
 Reproduce the original evidence:
   python3 tools/capture_fidelity.py --core /path/to/genesis_plus_gx_libretro.so \
       --rom /path/to/shinobi3_us.bin --out out/fidelity

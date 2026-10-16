@@ -19,8 +19,8 @@ No badge images, copied guides, ROMs or extracted assets are distributed.
 Eligibility
 -----------
 Start from NEW GAME to earn achievements. All ordinary difficulty/ammunition
-settings work, including the original zero-ammunition setting. Score challenges
-exclude Easy; True Ninja Master requires Expert throughout with no game-over
+settings work, including the original zero-ammunition setting and Disable
+shurikens. Score challenges exclude Easy; True Ninja Master requires Expert throughout with no game-over
 continues; Art of Self-Preservation requires Expert. Controls, remapping,
 widescreen, display effects, volume and ordinary pause do not affect eligibility.
 
@@ -31,17 +31,22 @@ continues do not reset a round's bonus flags or its elapsed time.
 Manual slot loads, developer stage starts/warps/skips/refills, forced power,
 invincibility/infinite ammunition (including original secret codes), health/life
 locks, simulation speed changes, developer frame stepping and mid-run changes
-to difficulty/ammunition mark the run PRACTICE. The native Disable shurikens
-modifier is also practice. Removing a modifier or loading an earlier slot never
-restores eligibility: the profile remembers tainted run identities. New Game
+to difficulty/ammunition mark the run PRACTICE. Removing a modifier or loading
+an earlier slot never restores eligibility: the profile remembers tainted run identities. New Game
 starts a new identity. Legacy saves have no identity and resume as practice.
 Previously earned achievements and standard statistics remain earned.
 
 Statistics
 ----------
-The menu shows the latest run (current while playing, last after returning to
-the title) alongside lifetime Standard totals; Left/Right or the mouse target
-switches to lifetime Practice totals. Run classification is shown separately.
+The Statistics screen has Standard, Practice and Best Times tabs. The first two
+compare the latest run with the corresponding lifetime totals in labelled
+columns; the selected row shows exact values. The initial tab matches the latest
+run's classification. Best Times shows only standard runs. Left/Right or the
+mouse changes tabs, and each view keeps its scroll position. Achievement tabs
+filter All, Locked and Unlocked entries, with full requirements below the list.
+Hold Up/Down, use the mouse wheel, or click the arrows/track to scroll. Queued
+unlock notifications pause while either screen is open, without delaying profile
+saves. Profile errors have readable details that update when a save retry succeeds.
 Time is active gameplay simulation ticks at 60 Hz, formatted hours:minutes:seconds
 without a 24-hour wrap. Pause, menus, round cards/tallies and load/death fades
 that hold gameplay are excluded; casting/lag/death animation during gameplay

@@ -960,7 +960,14 @@ impl Combat {
         };
         let mut hits = 0;
         for enemy in &mut self.enemies {
-            if !Self::weapon_targetable(&self.roster, &self.spawns, enemy)
+            let damage = self
+                .roster
+                .ninjutsu_damage(self.spawns[enemy.spawn].kind, damage);
+            if !Self::hittable(enemy)
+                || !self
+                    .roster
+                    .hit_by(self.spawns[enemy.spawn].kind, enemy, damage)
+                    .weapon_collides()
                 || enemy.high_priority != self.weapons.high_priority
             {
                 continue;

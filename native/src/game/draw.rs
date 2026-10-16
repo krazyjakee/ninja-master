@@ -130,7 +130,10 @@ impl Game {
         // behind them all, #87) to list 1, each list last linked first.
         for list in SpriteList::BACK_TO_FRONT {
             match list {
-                SpriteList::Player => self.draw_player(frame, palettes, camera),
+                SpriteList::Player => {
+                    self.draw_ghost(frame, camera);
+                    self.draw_player(frame, palettes, camera);
+                }
                 SpriteList::PlayerAttacks => {
                     self.combat.draw_list(frame, list, palettes, tiles, camera);
                     // The spread and spent shurikens carry the player's
@@ -256,6 +259,7 @@ impl Game {
                 shurikens_disabled: self.options.shurikens_disabled(),
             },
         );
+        self.draw_practice_clock(frame);
         if let Some(fade) = self.fade {
             frame.fade(fade);
         }

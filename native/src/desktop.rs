@@ -143,7 +143,7 @@ pub(super) fn run(
         sdl2::hint::set("SDL_RENDER_DRIVER", "opengl");
     }
     // The frame is scaled by `game_rect`; the window's own resolution is
-    // left for the F1 dev panel.
+    // adjusted through Options or the desktop shortcuts.
     // NINJA_VSYNC=0 provides an explicit clock-paced path for VRR displays.
     let request_vsync = std::env::var("NINJA_VSYNC").as_deref() != Ok("0");
     let builder = window.into_canvas();
@@ -333,6 +333,9 @@ pub(super) fn run(
         {
             toast = None;
             repaint = true;
+        }
+        if let Scene::Play(modes) = &mut *scene {
+            modes.display_context((&settings).into(), crt.as_ref().err().map(String::as_str));
         }
         for event in events.poll_iter() {
             had_event = true;
@@ -691,6 +694,9 @@ pub(super) fn run(
 
         if settings_changed {
             save_settings(config_path.as_deref(), &settings);
+            if let Scene::Play(modes) = &mut *scene {
+                modes.display_context((&settings).into(), crt.as_ref().err().map(String::as_str));
+            }
         }
         let title = match (&rebinder, status) {
             (Some(session), _) => session.prompt().map(|(step, total, label)| {
@@ -804,6 +810,24 @@ pub(super) fn run(
         }
         if scene.quit_requested() {
             break 'running;
+        }
+
+        // Native Options owns the controls; the desktop applies and persists
+        // presentation changes through the same path used by shortcuts.
+        if let Scene::Play(modes) = &mut *scene
+            && let Some(display) = modes.take_display_settings()
+        {
+            let before = settings.clone();
+            display.apply(&mut settings);
+            window_settings_changed |= before.fullscreen != settings.fullscreen
+                || (!settings.fullscreen
+                    && (before.scale != settings.scale
+                        || before.widescreen != settings.widescreen));
+            frame.smooth_wave_effects = settings.smooth_wave_effects;
+            save_settings(config_path.as_deref(), &settings);
+            scene.draw(frame);
+            upload = true;
+            repaint = true;
         }
 
         if reset_renderer {
@@ -932,7 +956,6 @@ pub(super) fn run(
                         .and_then(ninja_master_native::sound::SoundPlayer::current_music),
                 );
                 let info = panel::PanelInfo {
-                    crt_error: crt.as_ref().err().map(String::as_str),
                     art_name: &frame.art_pack().map_or_else(
                         || "Original".to_owned(),
                         |p| {

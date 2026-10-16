@@ -1,5 +1,6 @@
 //! Deterministic run journal and optional, local-only persistent player profile.
 mod catalog;
+mod presentation;
 mod screen;
 pub use catalog::{Achievement, CATALOG};
 pub use screen::{ProfileScreen, ScreenKind};
@@ -87,6 +88,7 @@ pub struct Run {
     pub candidates: u64,
     pub cleared: u8,
     pub best_rounds: [Option<u64>; 7],
+    pub completed_stages: BTreeSet<String>,
     pub round_ticks: u64,
     pub round_died: bool,
     pub round_start_ammo: u16,
@@ -144,7 +146,9 @@ pub struct Data {
     pub credited: BTreeMap<u64, Stats>,
     pub tainted: BTreeSet<u64>,
     pub best_rounds: [Option<u64>; 7],
+    pub completed_stages: BTreeSet<String>,
     pub last_run: Option<Run>,
+    pub time_trials: BTreeMap<String, crate::practice::Record>,
 }
 #[derive(Default)]
 pub struct Profile {
@@ -204,6 +208,9 @@ impl Profile {
             self.data.lifetime.credit(&run.stats, high);
         }
         if !practice {
+            self.data
+                .completed_stages
+                .extend(run.completed_stages.iter().cloned());
             for index in 0..CATALOG.len() {
                 if run.candidates & (1u64 << index) != 0 && !self.data.unlocked.contains_key(&index)
                 {
@@ -221,6 +228,28 @@ impl Profile {
         snapshot.practice = practice;
         self.data.last_run = Some(snapshot);
         self.dirty = true;
+    }
+    pub(crate) fn record_trial(
+        &mut self,
+        stage: crate::stage::StageId,
+        attempt: crate::practice::Attempt,
+    ) -> bool {
+        if !attempt.completed || !attempt.valid || !attempt.record.valid() {
+            return false;
+        }
+        let key = crate::practice::stage_key(stage);
+        if self
+            .data
+            .time_trials
+            .get(&key)
+            .is_some_and(|old| old.valid() && old.ticks <= attempt.record.ticks)
+        {
+            return false;
+        }
+        self.data.time_trials.insert(key, attempt.record);
+        self.dirty = true;
+        self.flush();
+        true
     }
     pub(crate) fn taint(&mut self, run: &mut Run) {
         // Keep pre-modification progress, then make eligibility sticky across
@@ -261,14 +290,22 @@ impl Profile {
         }
     }
     pub(crate) fn tick(&mut self) {
-        if self.notice_ticks > 0 {
-            self.notice_ticks -= 1;
-            if self.notice_ticks == 0 {
-                self.notices.pop_front();
+        self.advance(true);
+    }
+    pub(crate) fn tick_without_notices(&mut self) {
+        self.advance(false);
+    }
+    fn advance(&mut self, show_notices: bool) {
+        if show_notices {
+            if self.notice_ticks > 0 {
+                self.notice_ticks -= 1;
+                if self.notice_ticks == 0 {
+                    self.notices.pop_front();
+                }
             }
-        }
-        if self.notice_ticks == 0 && !self.notices.is_empty() {
-            self.notice_ticks = 240;
+            if self.notice_ticks == 0 && !self.notices.is_empty() {
+                self.notice_ticks = 240;
+            }
         }
         self.last_flush += 1;
         if self.last_flush >= 300 {

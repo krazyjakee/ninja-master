@@ -6,6 +6,8 @@
 //! stores them, so it stays independent of SDL and is testable headless.
 
 use crate::input::Button;
+mod display;
+pub use display::DisplaySettings;
 use std::{
     ffi::OsString,
     fs, io,

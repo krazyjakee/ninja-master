@@ -4,6 +4,7 @@
 mod draw;
 mod loading;
 mod mode;
+mod practice;
 mod terrain;
 pub use terrain::Terrain;
 mod camera;
@@ -154,6 +155,7 @@ pub const REQUEST_PART_LOAD: u8 = 8;
 #[derive(Clone)]
 pub struct Game {
     pub run: crate::profile::Run,
+    pub(crate) practice: Option<crate::practice::Session>,
     /// Round/substage (1-based) and part being played (`$FF37A6/$FF37A8/$FF37AA`).
     pub stage_id: StageId,
     /// Set past the last round, where the cartridge starts `Mode_Ending`.
@@ -831,6 +833,7 @@ impl Game {
     /// they see this update's player and camera, as the sprites drawn from
     /// them do. Their hits reach the player on the next update.
     fn update_enemies(&mut self, down: bool) {
+        self.clear_explore_enemies();
         self.stage.camera_x_limits = Some(self.view_camera_limits());
         self.combat.world_bounds = self.stage.world_bounds();
         self.combat.camera_locked = self.arena.as_ref().is_some_and(|arena| arena.settled);

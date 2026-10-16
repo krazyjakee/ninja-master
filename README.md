@@ -98,8 +98,8 @@ Default controls follow the Mega Drive three-button layout:
 - **Ninjutsu:** press A/Z to use your selected technique. Pause, choose a technique with the directions, then resume with Enter.
 - **Quit during play:** pause, then press Attack followed by Jump.
 
-The title's **OPTIONS** menu adjusts difficulty, starting shurikens and control
-scheme. **DISABLE** is a distinct melee-only shuriken setting: it hides the ammo
+The title's **OPTIONS** menu has **Game** and **Display** tabs. Game adjusts
+difficulty, starting shurikens and control scheme. **DISABLE** is a distinct melee-only shuriken setting: it hides the ammo
 HUD, suppresses shuriken pickups and ranged attacks, and follows the run through
 deaths, continues, stages and saves. Finite aerial bursts fire only the ammunition
 remaining. Techniques can be selected with zero uses; casting still requires a use.
@@ -124,8 +124,13 @@ no ammunition; an empty dedicated shuriken action does nothing. Classic attack
 retains the original proximity-based choice.
 
 Menus support keyboard, controller and mouse together. Hover selects a row;
-click activates it. In options, click the left or right side of a setting to
-change it; click a sound-test label to play it and right-click to stop it.
+click activates it. In Options, click the Game or Display tab, use pad **X/Y**
+(**Q/W** or the controller shoulders by default), or move Up from the first
+setting and use Left/Right to change tabs. Each tab keeps its settings visible.
+Use the arrows or click the left or right side of a value to change it. Click a sound-test label to play
+it; right-click anywhere on its row to stop it, including voice previews.
+Hold a direction to repeat navigation or value changes. The footer explains
+the selected setting and confirms sound-test actions.
 The S.E. list also includes the two driver effects omitted by the original menu,
 labelled **SFX $AB** and **SFX $D7** because the ROM provides no names.
 Use the wheel or directions to scroll. Arrows indicate more rows above or below;
@@ -144,20 +149,44 @@ Continue is hidden when there is no compatible checkpoint; damaged or
 incompatible files produce a message without starting a game. It is separate
 from the original game-over continues and the eight manual save slots.
 
+## Practice
+
+Choose **PRACTICE** on the main menu, then **Explore** or **Time Trial**. Both
+stage lists unlock each stage only after you clear it in the normal game.
+Previously earned round-clear achievements also unlock that round's stages.
+Use **Escape**, controller **Back / View**, or **A** (A/Z or the west face
+button by default) to return one menu level; you can also click the back label.
+**Enter / Start**, Attack or Jump confirms your selection.
+
+**Explore** keeps the stage's terrain, hazards and pickups, with enemies and
+bosses removed. **Time Trial** keeps the enemies and races a cyan ghost of your
+fastest completed attempt. Its stage list shows every saved best time. Clears
+and failed attempts return to the stage list; pause and choose Quit to Menu to
+return there early. Pause stops the trial clock. Death ends an attempt, and
+cheats or simulation modifiers prevent a new record.
+
+Best times and ghosts persist in `profile.json`. Practice leaves your normal
+Continue checkpoint intact and does not unlock stages or achievements. Manual
+saving is unavailable during these practice sessions.
+
 ## Achievements and statistics
 
 The main menu now includes **Achievements** and **Statistics**, with keyboard,
 controller and mouse navigation. Browse all **49 local achievements** (590 points),
-see locked requirements and unlock notifications, or compare the latest run with
-lifetime Standard and Practice totals. Statistics include active playtime,
-completions, deaths, continues, enemy defeats, shurikens, melee hits, magic,
+filter by locked/unlocked state, read requirements and see unlock notifications.
+The Statistics screen has Standard, Practice and Best Times tabs. Run and lifetime
+values use labelled columns; select a row to read exact values. Hold Up/Down,
+use the mouse wheel or click the scroll controls to browse; Left/Right changes
+tabs. Unlock popups wait until you leave these screens. Statistics include active
+playtime, completions, deaths, continues, enemy defeats, shurikens, melee hits, magic,
 collected items and best round times.
 
 Start **New Game** for eligible achievement progress. Automatic **Continue**
 preserves it. Manual save loads, cheats, developer stage starts and simulation
 modifiers mark the run as Practice; display/control settings and ordinary pause
-are allowed. The profile persists in `profile.json` beside your settings and
-protects lifetime totals against replaying old saves.
+are allowed, as is starting with **Disable shurikens**. The profile persists in
+`profile.json` beside your settings and protects lifetime totals against replaying
+old saves.
 
 Achievements are local equivalents of the public RetroAchievements set;
 **they are not submitted to or verified by RetroAchievements**. Account
@@ -171,7 +200,7 @@ panel is open; pause first if you need time to adjust settings.
 
 | Shortcut | Action |
 | --- | --- |
-| **F1** | Display, controls, audio and saves panel |
+| **F1** | Controls, audio, saves and tools panel |
 | **F2** | Toggle performance overlay |
 | **F3** | Guided control rebinding |
 | **F5 / F6** | Save / load the selected save slot |
@@ -180,9 +209,17 @@ panel is open; pause first if you need time to adjust settings.
 | **F11** | Toggle fullscreen |
 | **F12** | Save a PNG screenshot |
 
-**Display** offers widescreen that adapts to your window or monitor, including
-ultrawide displays, the original 320×224 view, optional CRT effects and scanlines.
-Integer scaling preserves whole pixels; turn it off to use the full display height.
+Open **Options → Display** on the title menu for three groups:
+
+- **Window:** fullscreen, window size, and widescreen or the original view.
+- **Scaling:** aspect ratio and integer scaling for sharp whole pixels or a larger image.
+- **Effects:** scenery waves, CRT filter, curvature, and scanline strength.
+
+Changes preview immediately and persist across restarts. Widescreen adapts to
+your window or monitor, including ultrawide displays. Dependent controls explain
+when they are unavailable. Click a percentage bar to set curvature or scanlines;
+**Reset Display** restores these nine display preferences without changing game,
+audio, or control settings. F7/F8 and F11 remain available during play.
 **F2** shows current and average FPS, frame time, a scrolling 240-frame graph,
 CPU raster/upload/submission times, presentation wait, sprite count, upload size
 and rendering resolutions. Measurements describe presentation and leave the

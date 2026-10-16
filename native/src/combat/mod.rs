@@ -6,6 +6,8 @@
 pub(crate) mod ambient;
 mod draw;
 mod enemy_updates;
+#[cfg(test)]
+mod fidelity_tests;
 mod hits;
 mod loading;
 mod mapping;

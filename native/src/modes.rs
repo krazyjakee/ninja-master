@@ -75,6 +75,17 @@ pub enum ModeChange {
     NewGame(crate::front_end::Front),
     Continue(crate::front_end::Front),
     Profile(crate::front_end::Front, crate::profile::ScreenKind),
+    Practice(
+        crate::front_end::Front,
+        Option<crate::practice::Kind>,
+        Option<crate::stage::StageId>,
+        Option<crate::practice::Attempt>,
+    ),
+    StartPractice(
+        crate::front_end::Front,
+        crate::practice::Kind,
+        crate::stage::StageId,
+    ),
 }
 
 /// One `$FF002A` handler.
@@ -84,6 +95,10 @@ pub trait Mode {
     fn name(&self) -> &'static str;
     fn menu_event(&mut self, _: crate::menu::MenuEvent) {}
     fn menu_context(&mut self, _: bool, _: &str) {}
+    fn display_context(&mut self, _: crate::settings::DisplaySettings, _: Option<&str>) {}
+    fn take_display_settings(&mut self) -> Option<crate::settings::DisplaySettings> {
+        None
+    }
     fn checkpoint_requested(&self) -> bool {
         false
     }
@@ -161,7 +176,11 @@ impl Modes {
         if self.quit {
             return;
         }
-        self.profile.tick();
+        if matches!(self.current.name(), "Profile" | "Options" | "Practice") {
+            self.profile.tick_without_notices();
+        } else {
+            self.profile.tick();
+        }
         if let Some(game) = self.current.game() {
             self.profile.observe(&game.run);
         }
@@ -169,15 +188,19 @@ impl Modes {
         if input.pressed(Button::Mode)
             && matches!(
                 self.current.name(),
-                "Title" | "Options" | "Pause" | "GameOver" | "Profile"
+                "Title" | "Options" | "Pause" | "GameOver" | "Profile" | "Practice"
             )
         {
             self.current.menu_event(crate::menu::MenuEvent::Back);
             input.pressed &= !Button::Mode.mask();
             input.held &= !Button::Mode.mask();
         }
-        self.current
-            .menu_context(self.progress.available(), &self.progress.status);
+        let status = if self.current.name() == "Profile" {
+            &self.profile.status
+        } else {
+            &self.progress.status
+        };
+        self.current.menu_context(self.progress.available(), status);
         let change = self.current.tick(input);
         if let Some(game) = self.current.game() {
             self.profile.observe(&game.run);
@@ -214,6 +237,76 @@ impl Modes {
                     self.profile.data.clone(),
                     self.profile.status.clone(),
                 )));
+            }
+            Some(ModeChange::Practice(front, kind, stage, attempt)) => {
+                self.history = None;
+                let mut message = String::new();
+                if let Some(attempt) = attempt {
+                    let ticks = attempt.record.ticks;
+                    message = if !attempt.completed {
+                        "ATTEMPT ENDED. SELECT A STAGE".into()
+                    } else if kind == Some(crate::practice::Kind::Explore) {
+                        "STAGE COMPLETE".into()
+                    } else if !attempt.valid {
+                        "MODIFIED RUN - TIME NOT SAVED".into()
+                    } else if stage.is_some_and(|id| self.profile.record_trial(id, attempt)) {
+                        format!("NEW BEST! {}", crate::practice::time(ticks))
+                    } else {
+                        format!("FINISHED IN {}", crate::practice::time(ticks))
+                    };
+                }
+                self.profile.flush();
+                if !self.profile.status.is_empty() {
+                    message = self.profile.status.clone();
+                }
+                self.replace(Box::new(crate::practice::PracticeScreen::new(
+                    front,
+                    self.profile.data.clone(),
+                    kind,
+                    stage,
+                    message,
+                )));
+            }
+            Some(ModeChange::StartPractice(front, kind, stage)) => {
+                // Recheck the unlock at the boundary; menu navigation cannot bypass it.
+                let allowed = stage.part == 0
+                    && crate::stage::all_substages(&front.rom)
+                        .is_ok_and(|stages| stages.contains(&stage))
+                    && crate::practice::unlocked(&self.profile.data, stage);
+                if !allowed {
+                    self.replace(Box::new(crate::practice::PracticeScreen::new(
+                        front,
+                        self.profile.data.clone(),
+                        Some(kind),
+                        Some(stage),
+                        "COMPLETE THIS STAGE IN NORMAL GAME".into(),
+                    )));
+                } else {
+                    match Game::load_stage(&front.rom, stage) {
+                        Ok(mut game) => {
+                            let ghost = if kind == crate::practice::Kind::TimeTrial {
+                                self.profile
+                                    .data
+                                    .time_trials
+                                    .get(&crate::practice::stage_key(stage))
+                                    .cloned()
+                            } else {
+                                None
+                            };
+                            game.start_practice(front, kind, ghost);
+                            self.profile.begin(&mut game.run);
+                            self.history = None;
+                            self.replace(Box::new(game));
+                        }
+                        Err(error) => self.replace(Box::new(crate::practice::PracticeScreen::new(
+                            front,
+                            self.profile.data.clone(),
+                            Some(kind),
+                            Some(stage),
+                            error.to_ascii_uppercase(),
+                        ))),
+                    }
+                }
             }
             Some(ModeChange::Quit) => {
                 self.profile.flush();
@@ -292,6 +385,16 @@ impl Modes {
     pub fn options(&self) -> Option<crate::options::GameOptions> {
         self.current.options()
     }
+    pub fn display_context(
+        &mut self,
+        settings: crate::settings::DisplaySettings,
+        error: Option<&str>,
+    ) {
+        self.current.display_context(settings, error);
+    }
+    pub fn take_display_settings(&mut self) -> Option<crate::settings::DisplaySettings> {
+        self.current.take_display_settings()
+    }
     pub fn set_options(&mut self, options: crate::options::GameOptions) {
         if self.game().is_some() {
             self.record(crate::devtools::replay::Event::Options(options));
@@ -331,7 +434,7 @@ impl Modes {
             self.profile.observe(&game.run);
         }
         self.profile.flush();
-        if self.current.name() == "Demo" {
+        if self.current.name() == "Demo" || self.game().is_some_and(|g| g.practice.is_some()) {
             return;
         }
         if self
@@ -373,6 +476,11 @@ impl Modes {
     }
     pub fn draw(&self, frame: &mut Frame) {
         self.current.draw(frame);
+        // Keep requirements, exact statistics and option controls unobscured.
+        // The notification queue resumes after leaving these screens.
+        if matches!(self.current.name(), "Profile" | "Options" | "Practice") {
+            return;
+        }
         if let (Some(&index), Some(font)) = (
             self.profile.notices.front(),
             self.current
@@ -425,6 +533,9 @@ impl Modes {
     }
     pub fn mark_practice(&mut self) {
         if let Some(game) = self.current.game_mut() {
+            if let Some(session) = &mut game.practice {
+                session.valid = false;
+            }
             if game.run.practice {
                 return;
             }

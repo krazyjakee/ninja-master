@@ -38,14 +38,32 @@ impl Player {
     /// natively a hard floor wins over material 12, which the player sinks
     /// through, so the body never enters solid ground.
     pub(super) fn floor_below(terrain: &impl Terrain, x: i32, row: i32) -> Option<Material> {
+        Self::floor_contact(terrain, x, row).map(|(_, material)| material)
+    }
+    /// Keep the supporting column for the object-floor and embedded checks.
+    fn floor_contact(terrain: &impl Terrain, x: i32, row: i32) -> Option<(i32, Material)> {
         let mut sinking = None;
         for px in Self::probes(x) {
             let material = terrain.material_at(px, row).for_player();
+            // A tucked jump can rise past an overhang with an outer foot
+            // probe inside its side. Only an exposed top can support that
+            // probe; snapping out of the wall would climb it every tick.
+            // Keep centre penetration recovery and list-6 platform support.
+            if px != x
+                && material.full_block()
+                && !terrain.object_at(px, row)
+                && terrain
+                    .wall_material_at(px, row - 1)
+                    .for_player()
+                    .full_block()
+            {
+                continue;
+            }
             if material.stands_on() {
                 if !material.slows() {
-                    return Some(material);
+                    return Some((px, material));
                 }
-                sinking = Some(material);
+                sinking = Some((px, material));
             }
         }
         sinking
@@ -53,13 +71,8 @@ impl Player {
     /// Whether [`Self::floor_below`]'s hard floor in `row` is a list-6
     /// object rather than the layout.
     fn floor_on_object(terrain: &impl Terrain, x: i32, row: i32) -> bool {
-        Self::probes(x)
-            .into_iter()
-            .find(|&px| {
-                let material = terrain.material_at(px, row).for_player();
-                material.stands_on() && !material.slows()
-            })
-            .is_some_and(|px| terrain.object_at(px, row))
+        Self::floor_contact(terrain, x, row)
+            .is_some_and(|(px, material)| !material.slows() && terrain.object_at(px, row))
     }
     /// A 1, 3, 4 or 5 in row `row` at any of the three body columns. Only
     /// the native somersault and air-stab lifts use it; the original's rise
@@ -252,13 +265,7 @@ impl Player {
         // that found support, not all three columns again. Probing the
         // other body edges here arms adjacent list-6 mines too early.
         let embedded = |feet: i32| {
-            let column = Self::probes(x)
-                .into_iter()
-                .find(|&px| {
-                    let material = terrain.material_at(px, y).for_player();
-                    material.stands_on() && !material.slows()
-                })
-                .unwrap_or(x);
+            let column = Self::floor_contact(terrain, x, y).map_or(x, |(px, _)| px);
             let material = terrain.material_at(column, feet - 1).for_player();
             material.stands_on() && !material.slows()
         };
@@ -293,5 +300,110 @@ impl Player {
         } else {
             Material::EMPTY
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Overhang {
+        left: bool,
+    }
+    impl Terrain for Overhang {
+        fn width(&self) -> i32 {
+            512
+        }
+        fn solid_at(&self, x: i32, y: i32) -> bool {
+            y >= 480 || (y < 352 && if self.left { x <= 100 } else { x >= 100 })
+        }
+    }
+
+    #[test]
+    fn descending_beside_overhang_does_not_land_on_its_side() {
+        // 2-2 part 0: the tucked body rises past an overhang's lower edge.
+        // At the apex only its outer foot probe lies inside the wall.
+        for left in [false, true] {
+            let terrain = Overhang { left };
+            let x = if left { 113 } else { 87 };
+            assert_eq!(Player::floor_below(&terrain, x, 311), None);
+            let mut player = Player::new(x, 311);
+            player.grounded = false;
+            player.velocity_y = UNIT;
+            player.move_vertically(&terrain, x, None, false, true, UNIT);
+            assert_eq!(player.position().1, 312);
+            assert!(!player.grounded);
+
+            player.y = 479 * UNIT;
+            player.velocity_y = 2 * UNIT;
+            player.move_vertically(&terrain, x, None, false, true, 2 * UNIT);
+            assert_eq!(player.position().1, 480);
+            assert!(player.grounded);
+        }
+    }
+
+    struct Ledge(Material);
+    impl Terrain for Ledge {
+        fn width(&self) -> i32 {
+            512
+        }
+        fn solid_at(&self, x: i32, y: i32) -> bool {
+            x >= 100 && y >= 320
+        }
+        fn material_at(&self, x: i32, y: i32) -> Material {
+            if self.solid_at(x, y) {
+                self.0
+            } else {
+                Material::EMPTY
+            }
+        }
+    }
+
+    #[test]
+    fn edge_support_keeps_exposed_tops_and_one_way_ledges() {
+        assert_eq!(
+            Player::floor_below(&Ledge(Material::SOLID), 87, 320),
+            Some(Material::SOLID)
+        );
+        for material in [Material::LEDGE, Material::PLATFORM, Material::MIRE] {
+            assert_eq!(
+                Player::floor_below(&Ledge(material), 87, 324),
+                Some(material)
+            );
+        }
+        // Centre penetration still recovers after damage or a forced drop.
+        assert_eq!(
+            Player::floor_below(&Ledge(Material::SOLID), 110, 324),
+            Some(Material::SOLID)
+        );
+    }
+
+    struct WallAndPlatform;
+    impl Terrain for WallAndPlatform {
+        fn width(&self) -> i32 {
+            512
+        }
+        fn solid_at(&self, x: i32, _: i32) -> bool {
+            x <= 86 || x >= 114
+        }
+        fn object_at(&self, x: i32, _: i32) -> bool {
+            x >= 114
+        }
+        fn wall_material_at(&self, x: i32, _: i32) -> Material {
+            if x <= 86 {
+                Material::SOLID
+            } else {
+                Material::EMPTY
+            }
+        }
+    }
+
+    #[test]
+    fn rejected_wall_does_not_hide_object_support_on_other_edge() {
+        assert_eq!(
+            Player::floor_below(&WallAndPlatform, 100, 311),
+            Some(Material::SOLID)
+        );
+        assert!(Player::floor_on_object(&WallAndPlatform, 100, 311));
     }
 }
