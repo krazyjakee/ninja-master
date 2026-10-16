@@ -41,7 +41,6 @@ impl Frame {
         self.art_entries.clear();
         self.art_cache_bytes = 0;
         self.art_cache_dirty = false;
-        self.sampled_art = None;
     }
 
     pub(super) fn replacement(&self, tile: &Tile, slot: Slot) -> Option<Rc<Replacement>> {
@@ -304,100 +303,14 @@ impl Frame {
         }
     }
 
-    /// A scrolled plane sample at a physical output pixel. UV stays in
-    /// original 8x8 tile units, so fractional wave motion keeps HD detail.
-    pub(crate) fn hd_tile_sample(
-        &mut self,
-        tile: &Tile,
-        slot: Slot,
-        screen: (i32, i32),
-        uv: (f32, f32),
-        flip: Flip,
-    ) {
-        let scale = self.output_scale();
-        let x = screen.0.saturating_add(self.origin_x * scale as i32);
-        let y = screen.1;
-        if !(0..self.output_width() as i32).contains(&x)
-            || !(0..self.output_height() as i32).contains(&y)
-        {
-            return;
-        }
-        self.invalidate();
-        let key = Key(tile.0, self.slots[slot.0 as usize].cram.unwrap());
-        if self
-            .sampled_art
-            .as_ref()
-            .is_none_or(|cached| cached.key != key || cached.slot != slot.0)
-        {
-            let art = self.replacement(tile, slot);
-            let scale = art.as_ref().map_or(1, |a| a.scale);
-            let entries = art.map(|a| self.replacement_entries(slot, &a, a.scale));
-            self.sampled_art = Some(SampledArt {
-                key,
-                slot: slot.0,
-                entries,
-                scale,
-            });
-        }
-        let art = self.sampled_art.as_ref().unwrap();
-        if let Some(entries) = &art.entries {
-            let side = 8 * art.scale;
-            let px = (uv.0 * art.scale as f32)
-                .floor()
-                .clamp(0.0, (side - 1) as f32) as usize;
-            let py = (uv.1 * art.scale as f32)
-                .floor()
-                .clamp(0.0, (side - 1) as f32) as usize;
-            let px = if flip.x { side - 1 - px } else { px };
-            let py = if flip.y { side - 1 - py } else { py };
-            let (entry, alpha) = entries[py * side + px];
-            self.put_hd(x as usize, y as usize, entry, alpha);
-        } else {
-            let px = uv.0.floor().clamp(0.0, 7.0) as usize;
-            let py = uv.1.floor().clamp(0.0, 7.0) as usize;
-            let px = if flip.x { 7 - px } else { px };
-            let py = if flip.y { 7 - py } else { py };
-            let byte = tile.0[py * 4 + px / 2];
-            let index = if px.is_multiple_of(2) {
-                byte >> 4
-            } else {
-                byte & 15
-            };
-            if index != 0 {
-                self.put_hd(x as usize, y as usize, slot.0 << 4 | u32::from(index), 255);
-            }
-        }
-        // Native-resolution tooling remains usable with packs installed.
-        if screen.0.rem_euclid(scale as i32) == 0 && screen.1.rem_euclid(scale as i32) == 0 {
-            let px = uv.0.floor().clamp(0.0, 7.0) as usize;
-            let py = uv.1.floor().clamp(0.0, 7.0) as usize;
-            let px = if flip.x { 7 - px } else { px };
-            let py = if flip.y { 7 - py } else { py };
-            let byte = tile.0[py * 4 + px / 2];
-            let index = if px.is_multiple_of(2) {
-                byte >> 4
-            } else {
-                byte & 15
-            };
-            if index != 0 {
-                self.put_native(
-                    y as usize / scale * self.width + x as usize / scale,
-                    slot.0 << 4 | u32::from(index),
-                );
-            }
-        }
-    }
-
-    /// One HD scanline span with a constant tile and vertical scroll. The
-    /// plane splits spans at tile and VSRAM column boundaries before calling.
-    #[allow(clippy::too_many_arguments)]
+    /// A physical scanline span whose samples share a tile. Fractional UVs
+    /// retain HD detail; column waves may change the source row within a span.
     pub(crate) fn hd_tile_span(
         &mut self,
         tile: &Tile,
         slot: Slot,
         screen: (i32, i32),
-        source: (f32, f32),
-        run: usize,
+        samples: impl ExactSizeIterator<Item = (f32, f32)>,
         flip: Flip,
     ) {
         let scale = self.output_scale();
@@ -406,6 +319,7 @@ impl Frame {
         if !(0..self.output_height() as i32).contains(&y) {
             return;
         }
+        let run = samples.len();
         let left = x.saturating_neg().clamp(0, run as i32) as usize;
         let native_row = y as usize / scale * self.width;
         let end_x = self.end.saturating_sub(native_row).min(self.width) * scale;
@@ -419,48 +333,226 @@ impl Frame {
             .as_ref()
             .map(|art| self.replacement_entries(slot, art, art.scale));
         let base = slot.0 << 4;
-        let native_y = source.1.floor().clamp(0.0, 7.0) as usize;
-        let native_y = if flip.y { 7 - native_y } else { native_y };
         let output = y as usize * width + (x + left as i32) as usize;
-        let side = art.as_ref().map_or(8, |art| art.scale * 8);
         let source_scale = art.as_ref().map_or(1, |art| art.scale);
-        let source_y = (source.1 * source_scale as f32)
-            .floor()
-            .clamp(0.0, (side - 1) as f32) as usize;
-        let source_y = if flip.y {
-            side - 1 - source_y
-        } else {
-            source_y
-        };
-        for dx in left..right {
-            let physical_x = screen.0 + dx as i32;
-            let u = (physical_x as f32 / scale as f32 + source.0).rem_euclid(8.0);
-            let tx = u.floor().clamp(0.0, 7.0) as usize;
-            let tx = if flip.x { 7 - tx } else { tx };
-            let byte = tile.0[native_y * 4 + tx / 2];
-            let index = if tx.is_multiple_of(2) {
-                byte >> 4
+        let side = source_scale * 8;
+        let native_line = (y as usize).is_multiple_of(scale);
+        for (dx, (u, v)) in samples.skip(left).take(right - left).enumerate() {
+            let physical_x = screen.0 + (left + dx) as i32;
+            let native_sample = native_line && physical_x.rem_euclid(scale as i32) == 0;
+            let index = if entries.is_none() || native_sample {
+                // UVs are nonnegative, so the integer conversion also floors.
+                let tx = (u as usize).min(7);
+                let ty = (v as usize).min(7);
+                let tx = if flip.x { 7 - tx } else { tx };
+                let ty = if flip.y { 7 - ty } else { ty };
+                let byte = tile.0[ty * 4 + tx / 2];
+                if tx.is_multiple_of(2) {
+                    byte >> 4
+                } else {
+                    byte & 15
+                }
             } else {
-                byte & 15
+                0
             };
             let (entry, alpha) = if let Some(entries) = &entries {
-                let sx = (u * source_scale as f32)
-                    .floor()
-                    .clamp(0.0, (side - 1) as f32) as usize;
+                let sx = ((u * source_scale as f32) as usize).min(side - 1);
+                let sy = ((v * source_scale as f32) as usize).min(side - 1);
                 let sx = if flip.x { side - 1 - sx } else { sx };
-                entries[source_y * side + sx]
+                let sy = if flip.y { side - 1 - sy } else { sy };
+                entries[sy * side + sx]
             } else {
                 (base | u32::from(index), if index == 0 { 0 } else { 255 })
             };
-            self.put_hd_at(output + dx - left, entry, alpha);
-            if physical_x.rem_euclid(scale as i32) == 0
-                && y.rem_euclid(scale as i32) == 0
-                && index != 0
-            {
+            self.put_hd_at(output + dx, entry, alpha);
+            if native_sample && index != 0 {
                 self.put_native(
-                    native_row + (x + dx as i32) as usize / scale,
+                    native_row + (x + (left + dx) as i32) as usize / scale,
                     base | u32::from(index),
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Scalar oracle: the old HD sampler, with a fresh artwork lookup so the
+    /// test does not share the span renderer's preparation or sampling code.
+    fn scalar_hd_sample(
+        frame: &mut Frame,
+        tile: &Tile,
+        slot: Slot,
+        screen: (i32, i32),
+        uv: (f32, f32),
+        flip: Flip,
+    ) {
+        let scale = frame.output_scale();
+        let x = screen.0 + frame.origin_x * scale as i32;
+        let y = screen.1;
+        if !(0..frame.output_width() as i32).contains(&x)
+            || !(0..frame.output_height() as i32).contains(&y)
+        {
+            return;
+        }
+        frame.invalidate();
+        let art = frame.replacement(tile, slot);
+        let entries = art
+            .as_ref()
+            .map(|art| frame.replacement_entries(slot, art, art.scale));
+        if let (Some(art), Some(entries)) = (art, entries) {
+            let side = 8 * art.scale;
+            let px = (uv.0 * art.scale as f32)
+                .floor()
+                .clamp(0.0, (side - 1) as f32) as usize;
+            let py = (uv.1 * art.scale as f32)
+                .floor()
+                .clamp(0.0, (side - 1) as f32) as usize;
+            let px = if flip.x { side - 1 - px } else { px };
+            let py = if flip.y { side - 1 - py } else { py };
+            let (entry, alpha) = entries[py * side + px];
+            frame.put_hd(x as usize, y as usize, entry, alpha);
+        } else {
+            let px = uv.0.floor().clamp(0.0, 7.0) as usize;
+            let py = uv.1.floor().clamp(0.0, 7.0) as usize;
+            let px = if flip.x { 7 - px } else { px };
+            let py = if flip.y { 7 - py } else { py };
+            let byte = tile.0[py * 4 + px / 2];
+            let index = if px % 2 == 0 { byte >> 4 } else { byte & 15 };
+            if index != 0 {
+                frame.put_hd(x as usize, y as usize, slot.0 << 4 | u32::from(index), 255);
+            }
+        }
+        if screen.0.rem_euclid(scale as i32) == 0 && y.rem_euclid(scale as i32) == 0 {
+            let px = uv.0.floor().clamp(0.0, 7.0) as usize;
+            let py = uv.1.floor().clamp(0.0, 7.0) as usize;
+            let px = if flip.x { 7 - px } else { px };
+            let py = if flip.y { 7 - py } else { py };
+            let byte = tile.0[py * 4 + px / 2];
+            let index = if px % 2 == 0 { byte >> 4 } else { byte & 15 };
+            if index != 0 {
+                frame.put_native(
+                    y as usize / scale * frame.width + x as usize / scale,
+                    slot.0 << 4 | u32::from(index),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hd_spans_match_scalar_sampling_with_replacements_and_native_fallbacks() {
+        let tile = Tile(std::array::from_fn(|i| (i * 37) as u8));
+        let palette: Palette = std::array::from_fn(|i| [(i * 17) as u8, (255 - i * 13) as u8, 144]);
+        let path = std::env::temp_dir().join(format!(
+            "ninja-wave-span-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        let file = std::fs::File::create(path.join("tile.png")).unwrap();
+        let mut png = png::Encoder::new(file, 24, 24);
+        png.set_color(png::ColorType::Rgba);
+        let mut png = png.write_header().unwrap();
+        let pixels: Vec<u8> = (0..24 * 24)
+            .flat_map(|i| [((i * 13) % 256) as u8, 72, 216, [0, 128, 255][i % 3]])
+            .collect();
+        png.write_image_data(&pixels).unwrap();
+        drop(png);
+        std::fs::write(path.join("pack.json"), serde_json::to_vec(&serde_json::json!({
+            "version": 1, "name": "wave test", "sheets": [{
+                "file": "tile.png", "width": 8, "height": 8,
+                "palettes": ([palette; 4]),
+                "cells": [{"tile": tile.0.iter().map(|b| format!("{b:02x}")).collect::<String>(), "line": 0, "x": 0, "y": 0}]
+            }]
+        })).unwrap()).unwrap();
+        let pack = Rc::new(ArtPack::load(&path).unwrap());
+        std::fs::remove_dir_all(path).unwrap();
+        assert_eq!(pack.replacement_count(), 1);
+        let fallback = Tile(std::array::from_fn(|i| (i * 19 + 3) as u8));
+        for scale in [1, 2, 3] {
+            for tile in [&tile, &fallback] {
+                for flip in [
+                    Flip::default(),
+                    Flip { x: true, y: false },
+                    Flip { x: false, y: true },
+                    Flip { x: true, y: true },
+                ] {
+                    let prepare = || {
+                        let mut frame = Frame::new(crate::WIDE_WIDTH);
+                        frame.set_art_pack(Some(pack.clone()));
+                        frame.set_output_scale(scale);
+                        frame.clear([12, 34, 56]);
+                        let slot = frame.slot(PaletteRef::Cram(0, &palette));
+                        frame.mark_high_sprites(true);
+                        for x in (frame.view_left()..frame.view_right()).step_by(3) {
+                            frame.pixel(x, 31, [255; 3]);
+                        }
+                        frame.mark_high_sprites(false);
+                        frame.behind_high_sprites(true);
+                        frame.clip_lines(Some(33));
+                        (frame, slot)
+                    };
+                    let (mut actual, slot) = prepare();
+                    let (mut expected, expected_slot) = prepare();
+                    let samples: Vec<_> = (0..8 * scale)
+                        .map(|i| {
+                            (
+                                i as f32 / scale as f32 + 0.125,
+                                ((i * 5) % (8 * scale)) as f32 / scale as f32,
+                            )
+                        })
+                        .collect();
+                    for y in [31 * scale, 32 * scale + scale - 1, 33 * scale] {
+                        for x in [
+                            actual.view_left() * scale as i32 - 2,
+                            actual.view_right() * scale as i32 - 4,
+                        ] {
+                            actual.hd_tile_span(
+                                tile,
+                                slot,
+                                (x, y as i32),
+                                samples.iter().copied(),
+                                flip,
+                            );
+                            for (dx, &uv) in samples.iter().enumerate() {
+                                scalar_hd_sample(
+                                    &mut expected,
+                                    tile,
+                                    expected_slot,
+                                    (x + dx as i32, y as i32),
+                                    uv,
+                                    flip,
+                                );
+                            }
+                        }
+                    }
+                    for frame in [&mut actual, &mut expected] {
+                        frame.change_cram_line(CramChange {
+                            line: 32,
+                            cram_line: 0,
+                            colors: [[216, 144, 72]; 16],
+                        });
+                        frame.fade(Fade::Out(3));
+                    }
+                    assert!(
+                        actual.rgb() == expected.rgb(),
+                        "native samples, scale {scale}"
+                    );
+                    assert!(
+                        actual.presentation_rgb() == expected.presentation_rgb(),
+                        "HD samples, scale {scale}"
+                    );
+                    assert_eq!(actual.high, expected.high);
+                    assert_eq!(
+                        actual.hd.as_ref().unwrap().high,
+                        expected.hd.as_ref().unwrap().high
+                    );
+                }
             }
         }
     }

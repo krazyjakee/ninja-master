@@ -1,4 +1,4 @@
-use crate::art_pack::{ArtPack, Key, Replacement};
+use crate::art_pack::{ArtPack, Replacement};
 use crate::{HEIGHT, WIDTH};
 use std::{
     cell::OnceCell,
@@ -175,13 +175,6 @@ impl std::ops::Deref for EncodedArt {
     }
 }
 
-struct SampledArt {
-    key: Key,
-    slot: u32,
-    entries: Option<ArtEntries>,
-    scale: usize,
-}
-
 struct PixelBlend {
     entries: [u32; 4],
     weights: [f32; 4],
@@ -269,7 +262,6 @@ pub struct Frame {
     art_entries: HashMap<(usize, u32, usize), ArtEntries>,
     art_cache_bytes: usize,
     art_cache_dirty: bool,
-    sampled_art: Option<SampledArt>,
 }
 
 impl Default for Frame {
@@ -304,7 +296,6 @@ impl Frame {
             art_entries: HashMap::new(),
             art_cache_bytes: 0,
             art_cache_dirty: false,
-            sampled_art: None,
         }
     }
 
@@ -451,7 +442,6 @@ impl Frame {
         if self.art_cache_dirty || self.art_cache_bytes + self.tints.len() * 48 > ART_CACHE_BYTES {
             self.reset_art_cache();
         }
-        self.sampled_art = None;
         if let Some(hd) = &mut self.hd {
             hd.pixels.fill(direct(color));
             hd.high.fill(false);
@@ -614,6 +604,75 @@ impl Frame {
         self.put(at, entry);
     }
 
+    /// A native horizontal wave span. The nine samples cover one tile row
+    /// and the first pixel of its neighbour; transparent taps keep the pixel
+    /// below. Coordinates are clipped once for the whole run.
+    pub(crate) fn filtered_horizontal_span(
+        &mut self,
+        screen: (i32, i32),
+        offset: f32,
+        source_x: i32,
+        samples: &[Option<(Slot, u8)>; 9],
+        run: usize,
+    ) {
+        debug_assert!(self.hd.is_none());
+        let x = screen.0 + self.origin_x;
+        let y = screen.1;
+        if !(0..HEIGHT as i32).contains(&y) {
+            return;
+        }
+        let left = x.saturating_neg().clamp(0, run as i32) as usize;
+        let end_x = self
+            .end
+            .saturating_sub(y as usize * self.width)
+            .min(self.width);
+        let right = run.min(end_x.saturating_sub(x.max(0) as usize) + left);
+        if left >= right || x >= self.width as i32 {
+            return;
+        }
+        self.invalidate();
+        let output = y as usize * self.width + (x + left as i32) as usize;
+        for dx in left..right {
+            let at = output + dx - left;
+            if self.behind && self.high[at] {
+                continue;
+            }
+            // Keep the scalar sampler's addition order: rounding can change
+            // the fractional part as a span crosses a power of two.
+            let wx = (screen.0 + dx as i32) as f32 + offset;
+            let integer = wx as i32;
+            let integer = integer - i32::from(wx < integer as f32);
+            let fraction = wx - integer as f32;
+            let px = (integer - source_x) as usize;
+            let a = samples[px];
+            let b = if fraction != 0.0 {
+                samples[px + 1]
+            } else {
+                None
+            };
+            if a.is_none() && b.is_none() {
+                continue;
+            }
+            let under = self.pixels[at];
+            let encode = |sample: Option<(Slot, u8)>| {
+                sample.map_or(under, |(slot, index)| slot.0 << 4 | u32::from(index))
+            };
+            let a = encode(a);
+            let b = encode(b);
+            let entry = if fraction == 0.0 || a == b {
+                a
+            } else {
+                let entry = BLEND | self.blends.len() as u32;
+                self.blends.push(PixelBlend {
+                    entries: [a, b, 0, 0],
+                    weights: [1.0 - fraction, fraction, 0.0, 0.0],
+                });
+                entry
+            };
+            self.put_native(at, entry);
+        }
+    }
+
     pub fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: Color) {
         self.invalidate();
         let x = x.saturating_add(self.origin_x);
@@ -726,7 +785,6 @@ impl Frame {
         self.art_entries.clear();
         self.tint_entries.clear();
         self.art_cache_dirty = true;
-        self.sampled_art = None;
         for slot in 0..first {
             let SlotPalette { colors, cram } = self.slots[slot];
             self.slots.push(SlotPalette {
