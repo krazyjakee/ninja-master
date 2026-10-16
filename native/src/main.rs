@@ -26,6 +26,7 @@ const TICK_SAMPLES: usize = 48_000 / 60 * 2;
 
 #[derive(Default)]
 struct Options {
+    render_benchmark: Option<PathBuf>,
     input_script: Option<PathBuf>,
     trace: Option<PathBuf>,
     sound: bool,
@@ -116,6 +117,13 @@ fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--render-benchmark" => {
+                options.render_benchmark = Some(
+                    args.next()
+                        .ok_or("--render-benchmark needs an output directory")?
+                        .into(),
+                );
+            }
             "--input-script" => {
                 options.input_script =
                     Some(args.next().ok_or("--input-script needs a file")?.into())
@@ -232,6 +240,7 @@ fn run() -> Result<(), String> {
                     With no mode flag, the desktop build boots the whole game (--boot); headless runs and --round/--substage/--part start play directly (--play).\n\
                     Full game: --boot [--rom FILE] (SEGA logo, story, title, options, attract demo, game, game over/continue, ending)\n\
                     Engine demo: --demo (synthetic test scene)\n\
+                    Rendering benchmark: --render-benchmark DIR [--frames N] [--rom FILE] (desktop GPU required; procedural fixtures need no ROM)\n\
                     Direct play: --play [--round R --substage S [--part P]] [--rom FILE] [--asset-report FILE] [--scripted] (move, run, jump, attack, ninjutsu, pause)\n\
                     Play continues through substage and round transitions (1-1 -> 1-2 ...), with ROUND CLEAR and the round card between rounds.\n\
                     Start (Enter) or Escape pauses: Up/Down/Left/Right select the ninjutsu, Start resumes, B then C quits to the title menu (its QUIT ends the program).\n\
@@ -252,6 +261,22 @@ fn run() -> Result<(), String> {
                 return Ok(());
             }
             _ => return Err(format!("unknown argument: {arg}")),
+        }
+    }
+    if let Some(directory) = &options.render_benchmark {
+        if options.headless {
+            return Err("Rendering benchmarks require a desktop display; omit --headless".into());
+        }
+        #[cfg(feature = "desktop")]
+        return desktop::benchmark(
+            directory,
+            options.frames.unwrap_or(30),
+            options.rom.as_deref(),
+        );
+        #[cfg(not(feature = "desktop"))]
+        {
+            let _ = directory;
+            return Err("Rendering benchmarks require the desktop feature".into());
         }
     }
     let stage_flags = options.part != 0 || options.round.is_some() || options.substage.is_some();

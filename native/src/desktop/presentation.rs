@@ -63,7 +63,12 @@ fn view_width(width: u32, height: u32, settings: &Settings) -> usize {
     width.clamp(WIDTH as u64, 4096) as usize
 }
 
-fn fit_frame_to_output(frame: &mut Frame, width: u32, height: u32, settings: &Settings) -> bool {
+pub(super) fn fit_frame_to_output(
+    frame: &mut Frame,
+    width: u32,
+    height: u32,
+    settings: &Settings,
+) -> bool {
     let view_width = view_width(width, height, settings);
     let resized = frame.width() != view_width;
     if resized {
@@ -120,7 +125,7 @@ pub(super) fn apply_window_settings(
     Ok(())
 }
 
-fn presentation_rect(width: u32, height: u32, settings: &Settings) -> Rect {
+pub(super) fn presentation_rect(width: u32, height: u32, settings: &Settings) -> Rect {
     if !settings.widescreen && settings.aspect == 2 {
         return Rect::new(0, 0, width.max(1), height.max(1));
     }
@@ -267,6 +272,8 @@ mod tests {
                 // changing modes, then upload and draw new frames immediately.
                 canvas.present();
                 apply_window_settings(&mut canvas, &settings).unwrap();
+                // Device-reset recovery rebuilds GPU resources in the existing ImGui context.
+                gui.reset_textures(&creator).unwrap();
                 events.pump_events();
                 assert_eq!(
                     canvas.window().fullscreen_state(),

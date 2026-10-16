@@ -218,6 +218,19 @@ Classic melee now samples proximity before turning, as the original does. The
 first forest boss exit walks into the broken opening and transitions before
 Joe reaches the pit beyond it.
 
+## Rendering development
+
+The desktop uploads each game frame only to its active presentation path. F2
+reports CPU composition, RGB resolution, upload and presentation costs separately.
+The CPU renderer remains the gameplay and headless fidelity reference.
+
+Run `python3 tools/benchmark_rendering.py --out out/rendering --frames 60` for
+procedural native/HD, widescreen/ultrawide and CRT benchmarks at 1080p, 1440p and
+4K. Add `--rom /path/to/game.bin` for real stage samples. A desktop OpenGL display
+is required. Results include raw samples, timing distributions, transfer counts,
+hardware metadata and pixel comparisons for the experimental GPU tile atlas.
+See [rendering measurements and backend decisions](tools/rendering/README.md).
+
 ## License
 
 The project's original code and app artwork are available under the

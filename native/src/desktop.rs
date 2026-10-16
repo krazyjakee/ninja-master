@@ -1,22 +1,26 @@
 mod art;
 mod audio;
+mod benchmark;
 mod capture;
 mod input;
 mod performance;
 mod presentation;
-// OpenGL/SDL interop is confined to this presentation module.
+// OpenGL/SDL interop is confined to the CRT and experimental tile-batch modules.
 #[allow(unsafe_code)]
 mod crt;
 mod gallery;
 mod gui;
 mod panel;
 mod rom_picker;
+#[allow(unsafe_code)]
+mod tile_batch;
+mod transfer;
 
 use audio::{open_audio, track_name};
+pub(crate) use benchmark::run as benchmark;
 use input::{InputMap, RESERVED_KEYS};
 use presentation::{
-    apply_window_settings, fit_frame_to_window, game_rect, gray_out, menu_point, scanlines,
-    set_icon, set_title,
+    apply_window_settings, fit_frame_to_window, game_rect, menu_point, set_icon, set_title,
 };
 pub(crate) use rom_picker::pick_rom;
 
@@ -305,8 +309,8 @@ pub(super) fn run(
     let mut escape_pause = false;
     let mut samples = [0i16; crate::TICK_SAMPLES];
     let mut floats = Vec::with_capacity(crate::TICK_SAMPLES);
-    let mut inactive_pixels = Vec::with_capacity(frame.width() * HEIGHT * 3);
-    let mut presentation_pixels = Vec::new();
+    let mut transfer_buffers = transfer::Buffers::default();
+    let mut reset_renderer = false;
     // The frame changes only when the scene ticks; the window is repainted
     // then, or when the window system asks for it.
     scene.draw(frame);
@@ -332,6 +336,13 @@ pub(super) fn run(
         }
         for event in events.poll_iter() {
             had_event = true;
+            if matches!(
+                event,
+                Event::RenderTargetsReset { .. } | Event::RenderDeviceReset { .. }
+            ) {
+                reset_renderer = true;
+                continue;
+            }
             match event {
                 Event::KeyDown {
                     scancode: Some(key),
@@ -795,6 +806,24 @@ pub(super) fn run(
             break 'running;
         }
 
+        if reset_renderer {
+            // Recreate GPU resources before drawing again. Game/replay state is untouched.
+            drop(std::mem::replace(&mut crt, Err("Renderer reset".into())));
+            texture = creator
+                .create_texture_streaming(
+                    PixelFormatEnum::RGB24,
+                    frame.output_width() as u32,
+                    frame.output_height() as u32,
+                )
+                .map_err(|error| error.to_string())?;
+            gui.reset_textures(&creator)?;
+            panel.gallery.set_art_pack(frame.art_pack());
+            thumbnail_versions.fill(None);
+            crt = crt::Crt::new(&video, &mut canvas);
+            reset_renderer = false;
+            upload = true;
+            repaint = true;
+        }
         if fit_frame_to_window(frame, &canvas, &settings)? {
             texture = creator
                 .create_texture_streaming(
@@ -813,39 +842,17 @@ pub(super) fn run(
             upload = true;
         }
         if std::mem::take(&mut upload) {
-            let upload_start = Instant::now();
-            let pixels = if focused {
-                frame.presentation_rgb()
-            } else {
-                gray_out(frame.presentation_rgb(), &mut inactive_pixels);
-                &inactive_pixels
-            };
-            let crt_enabled = settings.crt && crt.is_ok();
-            let pixels = if settings.scanlines == 0 || crt_enabled {
-                pixels
-            } else {
-                scanlines(
-                    pixels,
-                    frame.output_width(),
-                    frame.output_scale(),
-                    settings.scanlines,
-                    &mut presentation_pixels,
-                );
-                &presentation_pixels
-            };
-            texture
-                .update(None, pixels, frame.output_width() * 3)
-                .map_err(|error| error.to_string())?;
-            if crt_enabled {
-                crt.as_mut().unwrap().upload(
-                    &mut canvas,
-                    pixels,
-                    frame.output_width(),
-                    frame.output_height(),
-                )?;
-            }
-            performance.upload_ms = upload_start.elapsed().as_secs_f32() * 1000.0;
-            performance.upload_bytes = pixels.len() * if crt_enabled { 2 } else { 1 };
+            let transfer = transfer_buffers.upload(
+                &mut canvas,
+                &mut texture,
+                &mut crt,
+                frame,
+                &settings,
+                focused,
+            )?;
+            performance.resolve_ms = transfer.resolve_ms;
+            performance.upload_ms = transfer.upload_ms;
+            performance.upload_bytes = transfer.bytes;
             repaint = true;
         }
         // The panel redraws at the tick rate and on input.
@@ -857,18 +864,18 @@ pub(super) fn run(
             canvas.set_draw_color(sdl2::pixels::Color::BLACK);
             canvas.clear();
             let rect = game_rect(&canvas, &settings)?;
-            if settings.crt
-                && let Ok(crt) = &crt
-            {
-                crt.draw(
-                    &mut canvas,
-                    rect,
-                    frame.width(),
-                    settings.crt_curvature,
-                    settings.scanlines,
-                )?;
-            } else {
-                canvas.copy(&texture, None, rect)?;
+            if let Some(transfer) = transfer::draw(
+                &mut canvas,
+                &mut texture,
+                &mut crt,
+                frame,
+                &settings,
+                focused,
+                &mut transfer_buffers,
+            )? {
+                performance.resolve_ms += transfer.resolve_ms;
+                performance.upload_ms += transfer.upload_ms;
+                performance.upload_bytes += transfer.bytes;
             }
             performance.submit_ms = submit_start.elapsed().as_secs_f32() * 1000.0;
             if std::mem::take(&mut screenshot_requested)

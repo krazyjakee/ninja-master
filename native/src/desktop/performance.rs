@@ -9,6 +9,7 @@ pub(super) struct Performance {
     cursor: usize,
     count: usize,
     pub raster_ms: f32,
+    pub resolve_ms: f32,
     pub upload_ms: f32,
     pub submit_ms: f32,
     pub present_ms: f32,
@@ -23,6 +24,7 @@ impl Default for Performance {
             cursor: 0,
             count: 0,
             raster_ms: 0.0,
+            resolve_ms: 0.0,
             upload_ms: 0.0,
             submit_ms: 0.0,
             present_ms: 0.0,
@@ -102,13 +104,14 @@ impl Performance {
                     ));
                 }
                 ui.text(format!(
-                    "CPU raster {:.2} | upload {:.2} ms",
-                    self.raster_ms, self.upload_ms
+                    "CPU raster {:.2} | RGB {:.2} ms",
+                    self.raster_ms, self.resolve_ms
                 ));
                 ui.text(format!(
-                    "CPU submit {:.2} | present/wait {:.2} ms",
-                    self.submit_ms, self.present_ms
+                    "CPU upload {:.2} | submit {:.2} ms",
+                    self.upload_ms, self.submit_ms
                 ));
+                ui.text(format!("Present/wait {:.2} ms", self.present_ms));
                 ui.text(format!(
                     "Source {}x{} | view {}x{} px",
                     source.0, source.1, viewport.0, viewport.1

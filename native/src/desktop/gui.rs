@@ -82,6 +82,24 @@ impl<'t> Gui<'t> {
     }
 
     /// Texture zero is the font; positive IDs are RGB previews owned here.
+    pub(super) fn reset_textures(
+        &mut self,
+        creator: &'t TextureCreator<WindowContext>,
+    ) -> Result<(), String> {
+        let fonts = self.context.fonts();
+        let atlas = fonts.build_rgba32_texture();
+        let mut font = creator
+            .create_texture_static(PixelFormatEnum::RGBA32, atlas.width, atlas.height)
+            .map_err(|e| e.to_string())?;
+        font.update(None, atlas.data, atlas.width as usize * 4)
+            .map_err(|e| e.to_string())?;
+        font.set_blend_mode(BlendMode::Blend);
+        self.font = font;
+        self.images.clear();
+        Ok(())
+    }
+
+    /// Texture zero is the font; positive IDs are RGB previews owned here.
     pub(super) fn set_image(
         &mut self,
         creator: &'t TextureCreator<WindowContext>,

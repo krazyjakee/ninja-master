@@ -93,6 +93,7 @@ jobs:
           "LIB=$sdl\lib\x64;$env:LIB" >> $env:GITHUB_ENV
           "RC=$(Get-Command rc.exe | Select-Object -ExpandProperty Source)" >> $env:GITHUB_ENV
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$(Get-Command link.exe | Select-Object -ExpandProperty Source)" >> $env:GITHUB_ENV
+          "$sdl/lib/x64" >> $env:GITHUB_PATH
       - name: Install Rust
         run: rustup update stable && rustup default stable && rustup component add rustfmt clippy
       - uses: actions/cache@v4
@@ -108,9 +109,8 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo fmt --manifest-path native/Cargo.toml --check
       - name: Test
-        if: runner.os == 'Linux'
         run: cargo test --locked --manifest-path native/Cargo.toml
-      - name: Test fullscreen rendering
+      - name: Test rendering, capture and fullscreen recovery
         if: runner.os == 'Linux'
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
@@ -122,7 +122,7 @@ jobs:
           try:
               time.sleep(0.3)
               subprocess.run(['cargo', 'test', '--locked', '--manifest-path', 'native/Cargo.toml',
-                              'fullscreen_round_trips', '--', '--ignored', '--test-threads=1'], check=True)
+                              'desktop::', '--', '--ignored', '--test-threads=1'], check=True)
           finally:
               manager.terminate()
               manager.wait(timeout=5)
@@ -132,7 +132,7 @@ jobs:
         run: cargo clippy --locked --manifest-path native/Cargo.toml --all-targets
       - name: Test packaging
         if: runner.os == 'Linux'
-        run: python -m unittest discover -s tools -p 'test_package*.py'
+        run: python -m unittest discover -s tools -p 'test_*.py'
       - name: Build
         run: cargo build --locked --release --manifest-path native/Cargo.toml
       - name: Package portable archive

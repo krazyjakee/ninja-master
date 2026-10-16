@@ -36,7 +36,81 @@ fn flush(canvas: &mut WindowCanvas) -> Result<(), String> {
     Ok(())
 }
 
+fn gl_result(gl: &glow::Context) -> Result<(), String> {
+    // SAFETY: called only while the owning canvas has its GL context current.
+    let error = unsafe { gl.get_error() };
+    if error == glow::NO_ERROR {
+        Ok(())
+    } else {
+        Err(format!("OpenGL error 0x{error:04x}"))
+    }
+}
+
+/// SDL may leave row strides or a pixel buffer bound after texture updates.
+/// Raw slice uploads must use tightly packed client memory and restore that state.
+pub(super) struct Unpack<'a> {
+    gl: &'a glow::Context,
+    stores: [(u32, i32); 4],
+    buffer: Option<glow::NativeBuffer>,
+}
+
+impl<'a> Unpack<'a> {
+    pub(super) unsafe fn new(gl: &'a glow::Context) -> Self {
+        // SAFETY: caller owns the current compatibility GL context.
+        unsafe {
+            let stores = [
+                glow::UNPACK_ALIGNMENT,
+                glow::UNPACK_ROW_LENGTH,
+                glow::UNPACK_SKIP_ROWS,
+                glow::UNPACK_SKIP_PIXELS,
+            ]
+            .map(|p| (p, gl.get_parameter_i32(p)));
+            let buffer = gl.get_parameter_buffer(glow::PIXEL_UNPACK_BUFFER_BINDING);
+            gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
+            for (parameter, _) in stores {
+                gl.pixel_store_i32(
+                    parameter,
+                    if parameter == glow::UNPACK_ALIGNMENT {
+                        1
+                    } else {
+                        0
+                    },
+                );
+            }
+            Self { gl, stores, buffer }
+        }
+    }
+}
+impl Drop for Unpack<'_> {
+    fn drop(&mut self) {
+        // SAFETY: guard never outlives the owning SDL context.
+        unsafe {
+            for (p, v) in self.stores {
+                self.gl.pixel_store_i32(p, v);
+            }
+            self.gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, self.buffer);
+        }
+    }
+}
+
 impl Crt {
+    #[cfg(test)]
+    pub(super) fn inject_error_for_test(&self) {
+        // SAFETY: fault injection on the test's current context; an invalid enum
+        // produces a recoverable GL error without deleting or corrupting resources.
+        unsafe {
+            self.gl.enable(u32::MAX);
+        }
+    }
+
+    pub(super) fn finish(&self, canvas: &mut WindowCanvas) -> Result<(), String> {
+        flush(canvas)?;
+        // SAFETY: the owning SDL canvas has its context current. Benchmark only.
+        unsafe {
+            self.gl.finish();
+        }
+        gl_result(&self.gl)
+    }
     pub(super) fn new(video: &VideoSubsystem, canvas: &mut WindowCanvas) -> Result<Self, String> {
         if canvas.info().name != "opengl" {
             return Err("CRT requires the desktop OpenGL renderer.".into());
@@ -89,14 +163,19 @@ impl Crt {
         height: usize,
     ) -> Result<(), String> {
         flush(canvas)?;
+        if width == 0
+            || height == 0
+            || width.checked_mul(height).and_then(|n| n.checked_mul(3)) != Some(pixels.len())
+        {
+            return Err("Invalid CRT RGB frame dimensions".into());
+        }
         // SAFETY: this context belongs to the live canvas. RGB24 input is
         // tightly packed; unpack alignment and texture binding are restored.
         unsafe {
             let gl = &self.gl;
             let previous = gl.get_parameter_texture(glow::TEXTURE_BINDING_2D);
-            let alignment = gl.get_parameter_i32(glow::UNPACK_ALIGNMENT);
+            let _unpack = Unpack::new(gl);
             gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
-            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
             if self.size != (width, height) {
                 gl.tex_image_2d(
                     glow::TEXTURE_2D,
@@ -129,10 +208,9 @@ impl Crt {
                     glow::PixelUnpackData::Slice(Some(pixels)),
                 );
             }
-            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, alignment);
             gl.bind_texture(glow::TEXTURE_2D, previous);
         }
-        Ok(())
+        gl_result(&self.gl)
     }
 
     pub(super) fn draw(
@@ -215,7 +293,7 @@ impl Crt {
                 }
             }
         }
-        Ok(())
+        gl_result(&self.gl)
     }
 }
 
@@ -230,12 +308,21 @@ impl Drop for Crt {
 }
 
 unsafe fn compile_program(gl: &glow::Context) -> Result<glow::NativeProgram, String> {
+    // SAFETY: caller owns the current GL context.
+    unsafe { compile_sources(gl, VERTEX, include_str!("crt.frag")) }
+}
+
+pub(super) unsafe fn compile_sources(
+    gl: &glow::Context,
+    vertex: &str,
+    fragment: &str,
+) -> Result<glow::NativeProgram, String> {
     // SAFETY: called only with the canvas's current OpenGL context.
     unsafe {
         let program = gl.create_program()?;
         for (kind, source) in [
-            (glow::VERTEX_SHADER, VERTEX),
-            (glow::FRAGMENT_SHADER, include_str!("crt.frag")),
+            (glow::VERTEX_SHADER, vertex),
+            (glow::FRAGMENT_SHADER, fragment),
         ] {
             let shader = match gl.create_shader(kind) {
                 Ok(shader) => shader,
@@ -269,6 +356,68 @@ unsafe fn compile_program(gl: &glow::Context) -> Result<glow::NativeProgram, Str
 mod tests {
     use super::*;
     use sdl2::pixels::{Color, PixelFormatEnum};
+
+    #[test]
+    #[ignore = "requires a desktop OpenGL display"]
+    fn rendering_upload_restores_stride_offsets_and_pixel_buffer_and_handles_bad_shaders() {
+        let sdl = sdl2::init().unwrap();
+        let video = sdl.video().unwrap();
+        let driver = sdl2::render::drivers()
+            .position(|d| d.name == "opengl")
+            .unwrap() as u32;
+        let window = video
+            .window("GL upload state regression", 400, 300)
+            .build()
+            .unwrap();
+        let mut canvas = window.into_canvas().index(driver).build().unwrap();
+        let mut crt = Crt::new(&video, &mut canvas).unwrap();
+        // SAFETY: test owns this canvas's current GL context.
+        let buffer = unsafe {
+            let gl = &crt.gl;
+            assert!(compile_sources(gl, VERTEX, "#version 120\n invalid shader").is_err());
+            let buffer = gl.create_buffer().unwrap();
+            gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(buffer));
+            gl.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 509);
+            gl.pixel_store_i32(glow::UNPACK_SKIP_PIXELS, 7);
+            gl.pixel_store_i32(glow::UNPACK_SKIP_ROWS, 3);
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 8);
+            buffer
+        };
+        crt.upload(&mut canvas, &[255, 0, 0].repeat(398 * 224), 398, 224)
+            .unwrap();
+        // SAFETY: same current context; verify restoration and reset for SDL.
+        unsafe {
+            assert_eq!(crt.gl.get_parameter_i32(glow::UNPACK_ROW_LENGTH), 509);
+            assert_eq!(crt.gl.get_parameter_i32(glow::UNPACK_SKIP_PIXELS), 7);
+            assert_eq!(crt.gl.get_parameter_i32(glow::UNPACK_SKIP_ROWS), 3);
+            assert_eq!(crt.gl.get_parameter_i32(glow::UNPACK_ALIGNMENT), 8);
+            assert_eq!(
+                crt.gl
+                    .get_parameter_buffer(glow::PIXEL_UNPACK_BUFFER_BINDING),
+                Some(buffer)
+            );
+            crt.gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
+            crt.gl.delete_buffer(buffer);
+            for parameter in [
+                glow::UNPACK_ROW_LENGTH,
+                glow::UNPACK_SKIP_PIXELS,
+                glow::UNPACK_SKIP_ROWS,
+            ] {
+                crt.gl.pixel_store_i32(parameter, 0);
+            }
+            crt.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+        }
+        assert!(crt.upload(&mut canvas, &[0; 3], 398, 224).is_err());
+        canvas.set_draw_color(Color::BLACK);
+        canvas.clear();
+        crt.draw(&mut canvas, Rect::new(0, 0, 398, 224), 398, 0, 0)
+            .unwrap();
+        let pixel = canvas
+            .read_pixels(Rect::new(100, 100, 1, 1), PixelFormatEnum::RGB24)
+            .unwrap();
+        assert!(pixel[0] > 100);
+        assert_eq!(&pixel[1..], &[0, 0]);
+    }
 
     #[test]
     #[ignore = "requires a desktop OpenGL display"]
