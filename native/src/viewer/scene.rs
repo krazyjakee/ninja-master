@@ -5,7 +5,8 @@ use crate::{
     combat::draw_pieces,
     raster::SineWave,
     render::{
-        CramChange, Flip, Frame, Lines, PaletteRef, SatWriter, cram_lines, cram_palettes, md_color,
+        CramChange, Flip, Frame, Lines, PaletteRef, SatWriter, Slot, Tile, cram_lines,
+        cram_palettes, md_color,
     },
     rom::SpritePiece,
     stage::{
@@ -17,6 +18,85 @@ use crate::{
 /// With parallax disabled every plane B line uses this line's offset (in
 /// 1-1, the quarter-speed band).
 const UNIFORM_PARALLAX_LINE: usize = 72;
+
+fn sample_floor(value: f32) -> i32 {
+    let integer = value as i32;
+    integer - i32::from(value < integer as f32)
+}
+
+fn plane_row(
+    tiles: &[Tile],
+    slots: &[Slot; 4],
+    attr: u16,
+    row: usize,
+    priority: Option<bool>,
+) -> [Option<(Slot, u8)>; 8] {
+    if priority.is_some_and(|high| (attr & 0x8000 != 0) != high) {
+        return [None; 8];
+    }
+    let row = if attr & 0x1000 != 0 { 7 - row } else { row };
+    let tile = &tiles[usize::from(attr & 0x7ff)].0[row * 4..row * 4 + 4];
+    let slot = slots[usize::from((attr >> 13) & 3)];
+    std::array::from_fn(|x| {
+        let x = if attr & 0x800 != 0 { 7 - x } else { x };
+        let byte = tile[x / 2];
+        let index = if x.is_multiple_of(2) {
+            byte >> 4
+        } else {
+            byte & 15
+        };
+        (index != 0).then_some((slot, index))
+    })
+}
+
+/// Horizontal-only native waves need two taps. Decode their rows once per
+/// tile/VSRAM span, including the neighbour used by the last filtered pixel.
+#[allow(clippy::too_many_arguments)]
+fn horizontal_plane_line(
+    frame: &mut Frame,
+    tiles: &[Tile],
+    slots: &[Slot; 4],
+    line: usize,
+    offset: f32,
+    vscroll: &[i32; COLUMNS],
+    cell: &impl Fn(i32, i32) -> u16,
+    priority: Option<bool>,
+) {
+    let mut x = frame.view_left();
+    let end = frame.view_right();
+    while x < end {
+        let wx = sample_floor(x as f32 + offset);
+        let column = x.div_euclid(16).clamp(0, COLUMNS as i32 - 1) as usize;
+        let wy = line as i32 + vscroll[column];
+        let col = wx.div_euclid(8);
+        let row = wy.div_euclid(8);
+        let mut run = (8 - wx.rem_euclid(8))
+            .min(16 - x.rem_euclid(16))
+            .min(end - x);
+        // Floating-point rounding can put the final pixel into the next
+        // cell when the offset is extremely close to an integer.
+        if run > 1 && sample_floor((x + run - 1) as f32 + offset).div_euclid(8) != col {
+            run -= 1;
+        }
+        let a = plane_row(
+            tiles,
+            slots,
+            cell(col, row),
+            wy.rem_euclid(8) as usize,
+            priority,
+        );
+        let next = plane_row(
+            tiles,
+            slots,
+            cell(col + 1, row),
+            wy.rem_euclid(8) as usize,
+            priority,
+        );
+        let samples = std::array::from_fn(|i| if i == 8 { next[0] } else { a[i] });
+        frame.filtered_horizontal_span((x, line as i32), offset, col * 8, &samples, run as usize);
+        x += run;
+    }
+}
 
 impl Viewer {
     /// Clear padded map columns outside a narrow part's playable scene.
@@ -417,98 +497,136 @@ impl Viewer {
             }
         });
         let hd = frame.art_pack().is_some();
-        // Column interpolation depends only on screen X. Reuse it on every
-        // scanline instead of repeating the float arithmetic per pixel.
-        let native_columns: Vec<f32> = if smooth_columns && !hd {
-            (frame.view_left()..frame.view_right())
-                .map(|sx| {
-                    let position = (sx as f32 / 16.0).clamp(0.0, (COLUMNS - 1) as f32);
-                    let column = position.floor() as usize;
-                    columns[column]
-                        + (columns[(column + 1).min(COLUMNS - 1)] - columns[column])
-                            * position.fract()
+        // Column displacement depends only on screen X. Share it across all
+        // scanlines, including physical output columns when an HD pack is on.
+        let scale = frame.output_scale() as i32;
+        let sample_columns: Vec<f32> = if smooth_columns || hd {
+            (frame.view_left() * scale..frame.view_right() * scale)
+                .map(|x| {
+                    let sx = x as f32 / scale as f32;
+                    let position = (sx / 16.0).clamp(0.0, (COLUMNS - 1) as f32);
+                    let column = position as usize;
+                    if smooth_columns {
+                        columns[column]
+                            + (columns[(column + 1).min(COLUMNS - 1)] - columns[column])
+                                * position.fract()
+                    } else {
+                        columns[column]
+                    }
                 })
                 .collect()
         } else {
             Vec::new()
         };
+        let mut horizontal_samples = Vec::with_capacity(if hd { frame.output_width() } else { 0 });
+        let mut horizontal_runs = Vec::new();
+        let mut span_samples = Vec::with_capacity(if hd { 8 * scale as usize } else { 0 });
         for sy in 0..height {
             let line = sy + top as usize;
             let offset = shift(line);
             if offset.fract() != 0.0 || smooth_columns {
                 if hd {
-                    let scale = frame.output_scale() as i32;
+                    // H-scroll is constant over the physical rows of a native
+                    // scanline. Reuse its tile columns and fractional UVs.
+                    horizontal_samples.clear();
+                    horizontal_samples.extend(
+                        (frame.view_left() * scale..frame.view_right() * scale).map(|x| {
+                            let wx = x as f32 / scale as f32 + offset;
+                            let col = sample_floor(wx / 8.0);
+                            (col, wx - (col * 8) as f32)
+                        }),
+                    );
+                    if !smooth_columns {
+                        horizontal_runs.clear();
+                        let mut start = 0;
+                        while start < horizontal_samples.len() {
+                            let mut end = start + 1;
+                            while end < horizontal_samples.len()
+                                && horizontal_samples[end].0 == horizontal_samples[start].0
+                                && sample_columns[end] == sample_columns[start]
+                            {
+                                end += 1;
+                            }
+                            horizontal_runs.push(start..end);
+                            start = end;
+                        }
+                    }
                     for y in line as i32 * scale..(line as i32 + 1) * scale {
-                        let line = y as usize / scale as usize;
-                        let offset = shift(line);
+                        let sy = y as f32 / scale as f32;
                         if !smooth_columns {
-                            let mut x = frame.view_left() * scale;
-                            let end = frame.view_right() * scale;
-                            while x < end {
-                                let sx = x as f32 / scale as f32;
-                                let column =
-                                    (sx / 16.0).floor().clamp(0.0, (COLUMNS - 1) as f32) as usize;
-                                let wx = sx + offset;
-                                let wy = y as f32 / scale as f32 + columns[column];
-                                let run = (((8.0 - wx.rem_euclid(8.0)) * scale as f32).ceil()
-                                    as i32)
-                                    .max(1)
-                                    .min(16 * scale - x.rem_euclid(16 * scale))
-                                    .min(end - x);
-                                let attr =
-                                    cell((wx / 8.0).floor() as i32, (wy / 8.0).floor() as i32);
+                            for run in &horizontal_runs {
+                                let col = horizontal_samples[run.start].0;
+                                let wy = sy + sample_columns[run.start];
+                                let row = sample_floor(wy / 8.0);
+                                let v = wy - (row * 8) as f32;
+                                let attr = cell(col, row);
                                 if priority.is_none_or(|high| (attr & 0x8000 != 0) == high) {
                                     frame.hd_tile_span(
                                         &self.assets.tiles[usize::from(attr & 0x7ff)],
                                         slots[usize::from((attr >> 13) & 3)],
-                                        (x, y),
-                                        (offset, wy.rem_euclid(8.0)),
-                                        run as usize,
+                                        (frame.view_left() * scale + run.start as i32, y),
+                                        horizontal_samples[run.clone()]
+                                            .iter()
+                                            .map(|&(_, u)| (u, v)),
                                         Flip {
                                             x: attr & 0x800 != 0,
                                             y: attr & 0x1000 != 0,
                                         },
                                     );
                                 }
-                                x += run;
                             }
                             continue;
                         }
-                        for x in frame.view_left() * scale..frame.view_right() * scale {
-                            let sx = x as f32 / scale as f32;
-                            let position = (sx / 16.0).clamp(0.0, (COLUMNS - 1) as f32);
-                            let column = position.floor() as usize;
-                            let v = if smooth_columns {
-                                columns[column]
-                                    + (columns[(column + 1).min(COLUMNS - 1)] - columns[column])
-                                        * position.fract()
-                            } else {
-                                columns[column]
-                            };
-                            let wx = sx + offset;
-                            let wy = y as f32 / scale as f32 + v;
-                            let attr = cell((wx / 8.0).floor() as i32, (wy / 8.0).floor() as i32);
-                            if priority.is_some_and(|high| (attr & 0x8000 != 0) != high) {
-                                continue;
+                        let mut start = 0;
+                        while start < horizontal_samples.len() {
+                            let col = horizontal_samples[start].0;
+                            let row = sample_floor((sy + sample_columns[start]) / 8.0);
+                            span_samples.clear();
+                            let mut end = start;
+                            while end < horizontal_samples.len() {
+                                let (next_col, u) = horizontal_samples[end];
+                                let wy = sy + sample_columns[end];
+                                if next_col != col || sample_floor(wy / 8.0) != row {
+                                    break;
+                                }
+                                span_samples.push((u, wy - (row * 8) as f32));
+                                end += 1;
                             }
-                            frame.hd_tile_sample(
-                                &self.assets.tiles[usize::from(attr & 0x7ff)],
-                                slots[usize::from((attr >> 13) & 3)],
-                                (x, y),
-                                (wx.rem_euclid(8.0), wy.rem_euclid(8.0)),
-                                Flip {
-                                    x: attr & 0x800 != 0,
-                                    y: attr & 0x1000 != 0,
-                                },
-                            );
+                            let attr = cell(col, row);
+                            if priority.is_none_or(|high| (attr & 0x8000 != 0) == high) {
+                                frame.hd_tile_span(
+                                    &self.assets.tiles[usize::from(attr & 0x7ff)],
+                                    slots[usize::from((attr >> 13) & 3)],
+                                    (frame.view_left() * scale + start as i32, y),
+                                    span_samples.iter().copied(),
+                                    Flip {
+                                        x: attr & 0x800 != 0,
+                                        y: attr & 0x1000 != 0,
+                                    },
+                                );
+                            }
+                            start = end;
                         }
                     }
+                    continue;
+                }
+                if !smooth_columns {
+                    horizontal_plane_line(
+                        frame,
+                        &self.assets.tiles,
+                        &slots,
+                        line,
+                        offset,
+                        vscroll,
+                        &cell,
+                        priority,
+                    );
                     continue;
                 }
 
                 for sx in frame.view_left()..frame.view_right() {
                     let v = if smooth_columns {
-                        native_columns[(sx - frame.view_left()) as usize]
+                        sample_columns[(sx - frame.view_left()) as usize]
                     } else {
                         let column = sx.div_euclid(16).clamp(0, COLUMNS as i32 - 1) as usize;
                         columns[column]
@@ -865,6 +983,107 @@ impl Viewer {
                 SatWriter::Scenery,
                 |tile| Some(&tiles[tile & 0x7ff]),
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::render::Fade;
+
+    #[test]
+    fn horizontal_spans_match_scalar_sampling_at_tile_and_column_edges() {
+        let tiles: Vec<Tile> = (0..8)
+            .map(|tile| Tile(std::array::from_fn(|i| ((i * 37 + tile * 19) & 255) as u8)))
+            .collect();
+        let palettes = std::array::from_fn(|line| {
+            std::array::from_fn(|i| [(i * 17) as u8, (line * 60) as u8, (255 - i * 13) as u8])
+        });
+        let cell = |col: i32, row: i32| {
+            let id = (col + row * 3).rem_euclid(8) as u16;
+            id | ((col.rem_euclid(4) as u16) << 13)
+                | if col & 1 != 0 { 0x800 } else { 0 }
+                | if row & 1 != 0 { 0x1000 } else { 0 }
+                | if (col + row) & 1 != 0 { 0x8000 } else { 0 }
+        };
+        let vscroll = std::array::from_fn(|i| i as i32 * 7 - 37);
+        for offset in [-511.9999, -15.75, -0.000001, 0.125, 127.8125, 4096.3] {
+            for priority in [None, Some(false), Some(true)] {
+                let prepare = || {
+                    let mut frame = Frame::new(crate::WIDE_WIDTH);
+                    frame.clear([12, 34, 56]);
+                    let slots = cram_lines(&palettes).map(|palette| frame.slot(palette));
+                    frame.mark_high_sprites(true);
+                    for y in 24..31 {
+                        for x in (frame.view_left()..frame.view_right()).step_by(7) {
+                            frame.pixel(x, y, [255; 3]);
+                        }
+                    }
+                    frame.mark_high_sprites(false);
+                    frame.behind_high_sprites(true);
+                    frame.clip_lines(Some(29));
+                    (frame, slots)
+                };
+                let (mut actual, slots) = prepare();
+                let (mut expected, expected_slots) = prepare();
+                for line in 24..31 {
+                    horizontal_plane_line(
+                        &mut actual,
+                        &tiles,
+                        &slots,
+                        line,
+                        offset,
+                        &vscroll,
+                        &cell,
+                        priority,
+                    );
+                    for sx in expected.view_left()..expected.view_right() {
+                        let x = sx as f32 + offset;
+                        let tx = x.floor() as i32;
+                        let fx = x - tx as f32;
+                        let column = sx.div_euclid(16).clamp(0, COLUMNS as i32 - 1) as usize;
+                        let y = line as i32 + vscroll[column];
+                        let sample = |x: i32| {
+                            let attr = cell(x.div_euclid(8), y.div_euclid(8));
+                            if priority.is_some_and(|high| (attr & 0x8000 != 0) != high) {
+                                return None;
+                            }
+                            let px = x.rem_euclid(8) as usize;
+                            let py = y.rem_euclid(8) as usize;
+                            let px = if attr & 0x800 != 0 { 7 - px } else { px };
+                            let py = if attr & 0x1000 != 0 { 7 - py } else { py };
+                            let byte = tiles[usize::from(attr & 0x7ff)].0[py * 4 + px / 2];
+                            let index = if px % 2 == 0 { byte >> 4 } else { byte & 15 };
+                            (index != 0)
+                                .then_some((expected_slots[usize::from((attr >> 13) & 3)], index))
+                        };
+                        expected.filtered_pixel(
+                            sx,
+                            line as i32,
+                            [
+                                sample(tx),
+                                if fx == 0.0 { None } else { sample(tx + 1) },
+                                None,
+                                None,
+                            ],
+                            [1.0 - fx, fx, 0.0, 0.0],
+                        );
+                    }
+                }
+                for frame in [&mut actual, &mut expected] {
+                    frame.change_cram_line(CramChange {
+                        line: 26,
+                        cram_line: 2,
+                        colors: [[72, 144, 216]; 16],
+                    });
+                    frame.fade(Fade::Out(3));
+                }
+                assert!(
+                    actual.rgb() == expected.rgb(),
+                    "offset {offset}, priority {priority:?}"
+                );
+            }
         }
     }
 }
