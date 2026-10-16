@@ -18,6 +18,16 @@ saves. Graphics, music, sound and stage data load directly from your own cartrid
 This complete, unofficial port includes all seven rounds and is playable from
 start to finish. Full playthroughs have been tested on **Linux and Windows**.
 
+## Screenshots
+
+**First level — Round 1-1**
+
+![First-level gameplay in the forest, with Joe throwing a shuriken at an enemy](assets/first-level.png)
+
+| Options | Achievements |
+| --- | --- |
+| ![Options screen showing difficulty, shurikens, controls and sound tests](assets/options.png) | ![Achievements screen showing the local achievement list and unlock requirements](assets/achievements.png) |
+
 ## Getting started
 
 1. Download a package for your platform from [Releases](https://github.com/krazyjakee/ninja-master/releases).
@@ -276,5 +286,5 @@ binary packages include their notices.
 
 *Shinobi III*, its characters and original game content belong to Sega. This
 project is not affiliated with or endorsed by Sega. The repository and release
-archives do not include ROMs, original game artwork, music or disassembled game
+archives do not include ROMs, extracted game assets, music or disassembled game
 code. The MIT license does not grant rights to the original game content.
