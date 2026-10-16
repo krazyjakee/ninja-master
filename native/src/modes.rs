@@ -74,6 +74,7 @@ pub enum ModeChange {
     Quit,
     NewGame(crate::front_end::Front),
     Continue(crate::front_end::Front),
+    Profile(crate::front_end::Front, crate::profile::ScreenKind),
 }
 
 /// One `$FF002A` handler.
@@ -140,6 +141,8 @@ pub struct Modes {
     quit: bool,
     progress: crate::progress::Progress,
     pub(crate) history: Option<crate::devtools::replay::History>,
+    pub profile: crate::profile::Profile,
+    profile_font: Option<crate::text::Font>,
 }
 impl Modes {
     pub fn new(mode: Box<dyn Mode>) -> Self {
@@ -149,6 +152,8 @@ impl Modes {
             quit: false,
             progress: crate::progress::Progress::default(),
             history: None,
+            profile: crate::profile::Profile::default(),
+            profile_font: None,
         }
     }
     /// One main-loop frame (`$508`: `JSR (A6)` with A6 = `Main_Handler`).
@@ -156,11 +161,15 @@ impl Modes {
         if self.quit {
             return;
         }
+        self.profile.tick();
+        if let Some(game) = self.current.game() {
+            self.profile.observe(&game.run);
+        }
         self.record(crate::devtools::replay::Event::Tick(input));
         if input.pressed(Button::Mode)
             && matches!(
                 self.current.name(),
-                "Title" | "Options" | "Pause" | "GameOver"
+                "Title" | "Options" | "Pause" | "GameOver" | "Profile"
             )
         {
             self.current.menu_event(crate::menu::MenuEvent::Back);
@@ -170,6 +179,9 @@ impl Modes {
         self.current
             .menu_context(self.progress.available(), &self.progress.status);
         let change = self.current.tick(input);
+        if let Some(game) = self.current.game() {
+            self.profile.observe(&game.run);
+        }
         // Save after installing modes that still own gameplay. A transition
         // to the title has already consumed the game in a replay, so its
         // final tick cannot be used as a resumable history.
@@ -194,14 +206,27 @@ impl Modes {
                 let suspended = std::mem::replace(&mut self.current, Box::new(Idle));
                 self.current = build(suspended);
             }
-            Some(ModeChange::Quit) => self.quit = true,
+            Some(ModeChange::Profile(front, kind)) => {
+                self.profile.flush();
+                self.replace(Box::new(crate::profile::ProfileScreen::new(
+                    front,
+                    kind,
+                    self.profile.data.clone(),
+                    self.profile.status.clone(),
+                )));
+            }
+            Some(ModeChange::Quit) => {
+                self.profile.flush();
+                self.quit = true;
+            }
             Some(ModeChange::NewGame(front)) => match front.new_game() {
-                Ok(game) => {
+                Ok(mut game) => {
                     if let Err(error) = self.progress.clear() {
                         self.progress.status = format!("Cannot replace saved run: {error}");
                         self.replace(Box::new(crate::front_end::Title::menu(front)));
                         return;
                     }
+                    self.profile.begin(&mut game.run);
                     let mut history = crate::devtools::replay::History {
                         boot: false,
                         stage: game.stage_id,
@@ -213,6 +238,11 @@ impl Modes {
                         front.high_score,
                         front.demo_counter,
                     ));
+                    history
+                        .events
+                        .push(crate::devtools::replay::Event::RunIdentity(game.run.id));
+                    self.profile.observe(&game.run);
+                    self.profile.flush();
                     self.history = Some(history);
                     self.replace(crate::round_screens::StageClear::round_card(Box::new(game)));
                     self.checkpoint();
@@ -223,8 +253,23 @@ impl Modes {
                 }
             },
             Some(ModeChange::Continue(front)) => match self.progress.restore(&front.rom) {
-                Ok((mut game, history)) => {
+                Ok((mut game, mut history)) => {
+                    if game.run.id == 0 {
+                        game.run.practice = true;
+                        self.profile.begin(&mut game.run);
+                        self.profile
+                            .data
+                            .credited
+                            .insert(game.run.id, game.run.stats.clone());
+                        history
+                            .events
+                            .push(crate::devtools::replay::Event::RunIdentity(game.run.id));
+                    }
+                    game.run.practice |= self.profile.data.tainted.contains(&game.run.id);
                     self.history = Some(history);
+                    if game.run.practice {
+                        self.record(crate::devtools::replay::Event::Practice);
+                    }
                     game.restart_music();
                     self.replace(game);
                     self.record(crate::devtools::replay::Event::Resume);
@@ -251,12 +296,41 @@ impl Modes {
         if self.game().is_some() {
             self.record(crate::devtools::replay::Event::Options(options));
         }
+        if self.game().is_some_and(|g| {
+            g.options.level != options.level
+                || g.options.shurikens != options.shurikens
+                || g.options.infinite != options.infinite
+                || g.options.invincible != options.invincible
+        }) {
+            self.mark_practice();
+        }
         self.current.set_options(options);
     }
     pub fn enable_progress(&mut self, path: Option<std::path::PathBuf>, rom: &[u8]) {
+        self.profile_font = crate::text::Font::load(rom).ok();
+        self.profile =
+            crate::profile::Profile::load(path.as_ref().map(|p| p.with_file_name("profile.json")));
         self.progress = crate::progress::Progress::load(path, rom);
+        if self.current.name() != "Demo"
+            && let Some(game) = self.current.game_mut()
+            && game.run.id == 0
+        {
+            self.profile.begin(&mut game.run);
+            game.run.level = game.options.level;
+            game.run.initial_ammo = game.options.start_ammo(rom);
+            game.run.round_start_ammo = game.combat.hud.ammo;
+            game.run.practice = true; // Direct stage starts are practice; New Game is eligible.
+            let id = game.run.id;
+            self.record(crate::devtools::replay::Event::RunIdentity(id));
+            self.record(crate::devtools::replay::Event::Practice);
+            self.profile.flush();
+        }
     }
     pub fn checkpoint(&mut self) {
+        if let Some(game) = self.current.game() {
+            self.profile.observe(&game.run);
+        }
+        self.profile.flush();
         if self.current.name() == "Demo" {
             return;
         }
@@ -299,6 +373,30 @@ impl Modes {
     }
     pub fn draw(&self, frame: &mut Frame) {
         self.current.draw(frame);
+        if let (Some(&index), Some(font)) = (
+            self.profile.notices.front(),
+            self.current
+                .game()
+                .map(|g| g.font())
+                .or(self.profile_font.as_ref()),
+        ) {
+            let name = crate::profile::CATALOG[index].name.to_ascii_uppercase();
+            frame.rect(16, 184, 288, 32, [8, 12, 24]);
+            font.draw_text(
+                frame,
+                24,
+                188,
+                "LOCAL ACHIEVEMENT UNLOCKED",
+                crate::text::Style::plain([255, 210, 100], 1),
+            );
+            font.draw_text(
+                frame,
+                24,
+                202,
+                &name,
+                crate::text::Style::plain([220, 224, 232], 1),
+            );
+        }
     }
     pub fn name(&self) -> &'static str {
         self.current.name()
@@ -310,6 +408,29 @@ impl Modes {
     }
     pub fn game(&self) -> Option<&Game> {
         self.current.game()
+    }
+    pub(crate) fn loaded_profile_run(&mut self) {
+        if let Some(game) = self.current.game_mut()
+            && game.run.id == 0
+        {
+            self.profile.begin(&mut game.run);
+            self.profile
+                .data
+                .credited
+                .insert(game.run.id, game.run.stats.clone());
+            let id = game.run.id;
+            self.record(crate::devtools::replay::Event::RunIdentity(id));
+        }
+        self.mark_practice();
+    }
+    pub fn mark_practice(&mut self) {
+        if let Some(game) = self.current.game_mut() {
+            if game.run.practice {
+                return;
+            }
+            self.profile.taint(&mut game.run);
+            self.record(crate::devtools::replay::Event::Practice);
+        }
     }
     pub fn game_mut(&mut self) -> Option<&mut Game> {
         self.current.game_mut()

@@ -13,6 +13,7 @@ mod ninjutsu;
 mod scripted;
 mod session;
 mod signals;
+mod tracking;
 
 pub use scripted::scripted_input;
 
@@ -79,6 +80,7 @@ struct GameHooks<'a> {
     combat: &'a mut crate::combat::Combat,
     cast: &'a mut Option<crate::ninjutsu::Cast>,
     flags: &'a mut RoundFlags,
+    run: &'a mut crate::profile::Run,
     position: (i32, i32),
     /// `plr_ctrl` bit 5 and the Y velocity for an airborne throw's height.
     airborne: bool,
@@ -121,6 +123,11 @@ impl PlayerHooks for GameHooks<'_> {
     }
     fn damage(&mut self, damage: u8) -> bool {
         self.flags.damaged |= damage > 0;
+        if damage > 0
+            && let Some(e) = &mut self.run.encounter
+        {
+            e.damaged = true;
+        }
         self.combat.subtract_event_health(damage)
     }
 }
@@ -146,6 +153,7 @@ pub const REQUEST_PART_LOAD: u8 = 8;
 
 #[derive(Clone)]
 pub struct Game {
+    pub run: crate::profile::Run,
     /// Round/substage (1-based) and part being played (`$FF37A6/$FF37A8/$FF37AA`).
     pub stage_id: StageId,
     /// Set past the last round, where the cartridge starts `Mode_Ending`.
@@ -392,6 +400,7 @@ impl Game {
     /// last one's work still holds the CPU (`lag`). A player hit's art
     /// reload (`Player_PowerDown`) makes the frames after it lag too.
     pub fn tick(&mut self, input: Input) -> bool {
+        self.track_begin();
         let advancing = self.lag == 0 && self.cast.is_none();
         self.combat.weapons.force_throw = (self.options.control >= 4).then_some(
             input.pressed(Button::X) || (self.options.control == 4 && input.pressed(Button::Y)),
@@ -420,6 +429,7 @@ impl Game {
         if std::mem::take(&mut self.combat.art_reloaded) {
             self.lag = self.lag.saturating_add(HIT_LAG + self.extra_hit_lag());
         }
+        self.track_end();
         result
     }
     pub(super) fn sync_shurikens(&mut self) {
@@ -550,7 +560,10 @@ impl Game {
                 crate::special::Mount::Surfboard => crate::movement::state::SURF_DEATH,
             };
             self.apply_signals(&events.signals);
-            if events.lethal {
+            if events.damaged {
+                if let Some(e) = &mut self.run.encounter {
+                    e.damaged = true;
+                }
                 self.round_flags.damaged = true; // $21E92
             } else if self.combat.hud.ammo < ammo || self.combat.weapons.shots.len() > spread_count
             {
@@ -609,9 +622,13 @@ impl Game {
             (self.player.camera_x, self.player.camera_y),
             spikes,
         );
+        self.run.hits(&events.hits);
         self.extend_cues(events.sound_ids.iter().copied());
         self.apply_signals(&events.signals);
         if events.hit.is_some_and(|hit| hit.damage > 0) || events.lethal {
+            if let Some(e) = &mut self.run.encounter {
+                e.damaged = true;
+            }
             self.round_flags.damaged = true; // $20400, $21E92
         }
         if events.lethal {
@@ -636,6 +653,7 @@ impl Game {
             combat: &mut self.combat,
             cast: &mut self.cast,
             flags: &mut self.round_flags,
+            run: &mut self.run,
             position: player_position,
             airborne: !self.player.grounded,
             velocity_y: self.player.velocity_y,
@@ -839,6 +857,7 @@ impl Game {
         if let Some(special) = &mut self.special {
             special.after_objects(&events);
         }
+        self.run.hits(&events.hits);
         self.extend_cues(events.sound_ids);
         // A boss's death also requests the next substage (`$FF0029` bit 1, #52).
         self.apply_signals(&events.signals);
@@ -852,6 +871,7 @@ impl Game {
             (self.player.camera_x, self.player.camera_y),
             &self.stage.assets,
         );
+        self.run.hits(&events.hits);
         self.extend_cues(events.sound_ids);
         // The list-1 pass that ends it (the 1-1 gate's push).
         self.apply_signals(&events.signals);
@@ -905,6 +925,8 @@ impl Game {
             special.queue_ramp();
         }
         self.apply_palette_ops(&events.palette_ops);
+        self.run.stats.pickups += events.collected.len() as u64;
+        self.track_pickups(&events.collected_at);
         let crushed = events.crushed;
         self.extend_cues(events.sounds);
         if crushed && self.death.is_none() {

@@ -1,0 +1,144 @@
+LOCAL ACHIEVEMENTS AND STATISTICS
+=================================
+Reference inventory: https://retroachievements.org/game/64 (2026-10-16)
+49 core achievements, 590 reference points. The inventory, names, points and
+plain-language requirements are in src/profile/catalog.rs. Array positions
+0..48 are stable local identifiers in profile version 1, not RA service IDs.
+
+Service status
+--------------
+These are LOCAL achievements. There is no account login, token storage, online
+submission, service verification, hardcore status, or badge download. RA's
+published standalone-support policy excludes unofficial native ports:
+https://docs.retroachievements.org/general/standalone-support.html
+The in-game list and notifications explicitly identify local progress. The
+implementation uses public requirements and native game events, not RA's
+emulator-memory trigger expressions. Local points have no online effect.
+No badge images, copied guides, ROMs or extracted assets are distributed.
+
+Eligibility
+-----------
+Start from NEW GAME to earn achievements. All ordinary difficulty/ammunition
+settings work, including the original zero-ammunition setting. Score challenges
+exclude Easy; True Ninja Master requires Expert throughout with no game-over
+continues; Art of Self-Preservation requires Expert. Controls, remapping,
+widescreen, display effects, volume and ordinary pause do not affect eligibility.
+
+Automatic main-menu CONTINUE retains the run identity and eligibility. Original
+game-over continues stay in the same run and count as continues. Deaths and
+continues do not reset a round's bonus flags or its elapsed time.
+
+Manual slot loads, developer stage starts/warps/skips/refills, forced power,
+invincibility/infinite ammunition (including original secret codes), health/life
+locks, simulation speed changes, developer frame stepping and mid-run changes
+to difficulty/ammunition mark the run PRACTICE. The native Disable shurikens
+modifier is also practice. Removing a modifier or loading an earlier slot never
+restores eligibility: the profile remembers tainted run identities. New Game
+starts a new identity. Legacy saves have no identity and resume as practice.
+Previously earned achievements and standard statistics remain earned.
+
+Statistics
+----------
+The menu shows the latest run (current while playing, last after returning to
+the title) alongside lifetime Standard totals; Left/Right or the mouse target
+switches to lifetime Practice totals. Run classification is shown separately.
+Time is active gameplay simulation ticks at 60 Hz, formatted hours:minutes:seconds
+without a 24-hour wrap. Pause, menus, round cards/tallies and load/death fades
+that hold gameplay are excluded; casting/lag/death animation during gameplay
+counts. This is active play time, not a wall-clock or speedrun timer.
+
+Counters: game completions, round clears, deaths, game-over continues, hostile
+targets defeated, actual shuriken objects emitted (each spread star counts),
+landed damaging melee/board hits, successful ninjutsu starts and collected items.
+Enemy targets include independently damageable boss parts. Despawns and blocked
+or deflected attacks do not count. Bomb traps are not collectible items. Mijin
+counts as magic; it counts as a death only when it starts a fatal death sequence.
+Best round times include attempts/deaths/continues within that round and are
+recorded for standard runs only. Displayed large counters use M/B/T units.
+
+Persistence and rewind handling
+------------------------------
+profile.json is separate from settings, continue.nms and the eight save slots,
+in the same configuration directory. Missing old JSON fields default to zero;
+version 0 migrates on write. Corrupt/newer/unreadable profiles are preserved and
+reported read-only in the profile menu. Writes use a synced temporary file and
+rename. Progress flushes every five seconds of loop ticks, at checkpoints,
+new games/menu opens, eligibility changes and normal shutdown. A hard process
+kill can lose up to five seconds of recent statistics/unlocks.
+
+Run IDs are allocated persistently before a new run and stored in replay event
+14. Event 15 records practice status. Old replay tags remain readable. Replay
+reconstructs the run journal without profile I/O. Per-run, per-counter credited
+high-water marks prevent loading older states, restarting the app, or replaying
+input histories from crediting the same history twice. After a rewind, a counter
+adds to totals only after it exceeds its previous maximum; alternative branches
+below that maximum are deliberately not added. Legacy imports baseline existing
+counts before tracking new play. Unlock timestamps are retained and notifications
+queue once per newly unlocked challenge. Earlier standard credit is retained;
+new credit after a modifier goes into Practice totals.
+
+Native condition mapping (all 49)
+--------------------------------
+0..6  Round completions: actual NEXT_SUBSTAGE at the final substage of each
+      round. The clear is recorded once before transitions consume gameplay.
+7     All seven round bits, Expert, no game-over continues.
+8     Active 1-1 B8 leader to victory: no damage/death/jump/star/magic.
+9     Active 2-1 1C guard to victory: no damage/death/magic.
+10    3-1 C0 capsule controller routine 8 through routine 10h: no grounded
+      contact, damage, death or magic. Later floor-collapse animation is outside
+      the attempt. A failed attempt cannot reopen during victory.
+11    Active 4-1 18 guard to victory: damaging guard hits must be SurfStab
+      board hits (magic allowed); no stars, death or Mijin. At least one allowed
+      hit must land. Ordinary mounted sword cuts do not qualify.
+12    Active 5-1 10 commando to victory: damaging commando hits only AirStab
+      death kicks; no damage/death/stars/magic, with at least one landed kick.
+13    Active 6-1 F8 Karura to victory: no damage/death/magic.
+14    Round-1 list-8 boss entry to victory: no damage/death/stars/magic.
+15..20 Other list-8 boss entries to victory: no damage/death/magic.
+21..23 Actual carried ammunition >= new game's starting stock + 100/200/300.
+24..30 Round clear with that round's retained ninjutsu flag clear.
+31    All seven round bits with zero successful ninjutsu starts in the run.
+32    Round clear with positive health equal to maximum health.
+33    Round began with >=10 ammunition and retained throw flag is clear.
+34    Round clear with retained damage/throw/ninjutsu flags all clear and
+      no death in the round (including a pit death followed by a health refill).
+35    Expert and at least nine spare lives.
+36..38 Normal/Hard/Expert score >=50,000/150,000/300,000, including tally points.
+39..48 Optional-room entry or hidden extra-life collection, detailed below.
+
+Encounter starts use live native actor identities, not proximity or health
+refill differences. Only successful damage hits affect attack-type restrictions.
+Player damage is marked at the hit, before same-frame healing. Attempts reset
+on a new life/part load, with the round/run restrictions retained. Victories use
+the native completion signal (or capsule-controller victory), never disappearance.
+
+Secret mapping
+--------------
+World coordinates are part-local player FEET positions, half-open intervals.
+Regions are inside the ROM rooms, excluding their approach shafts/routes. They
+were checked against the US layout/list-6 item records and regional normalized
+images. The local implementation uses these explicit geometrical predicates,
+not an assertion of byte-for-byte parity with RA's unpublished trigger code.
+
+Local ID  Secret  Stage/part  X           Y          Reference items
+39        I       1-2/0      800..944    96..193    (828,192), (852,192)
+40        II      1-2/2      1664..1744  32..129    (1676,128), (1700,128)
+41        III     2-2/0      768..912    16..81     (780,64), (804,64)
+42        IV      3-2/0      2624..2816  184..257   (2652,248)..(2788,248)
+43        V       4-2/2      collect actual kind-3 item at x656..720,y-64..96
+                          (hidden 1-Up box at 684,24); entry alone is insufficient
+44        VI      5-2/0      32..288     336..385   four boxes at y384
+45        VII     5-2/1      0..128      48..97     (12,96)
+46        VIII    5-2/2      0..128      64..113    (12,112)
+47        IX      5-2/3      416..496    1584..1649 (460,1648), (484,1648)
+48        X       7-2/2      1616..1696  16..65     (1644,56), (1668,56)
+
+Verification
+------------
+cargo test --manifest-path native/Cargo.toml --no-default-features --lib
+cargo test --manifest-path native/Cargo.toml --no-default-features --lib -- --include-ignored
+cargo test --manifest-path native/Cargo.toml --no-default-features --test profile -- --ignored
+The ignored tests require the player's verified retail cartridges (US/EU/JP),
+located in ../rom or NINJA_MASTER_TEST_ROMS. They include challenge failure
+conditions, room/stage boundaries, hidden-life collection, finite spread counts,
+life/continue/transition retention, mouse/pad/back navigation and disk replay.

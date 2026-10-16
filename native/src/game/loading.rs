@@ -59,6 +59,11 @@ impl Game {
         }
         let door = doors::Door::entrance(rom, id, &sections[part])?;
         let mut game = Self {
+            run: crate::profile::Run {
+                initial_ammo: crate::options::GameOptions::default().start_ammo(rom),
+                round_start_ammo: crate::options::GameOptions::default().start_ammo(rom),
+                ..Default::default()
+            },
             stage_id: id,
             complete: false,
             requests: 0,

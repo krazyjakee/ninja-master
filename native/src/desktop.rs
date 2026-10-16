@@ -746,6 +746,9 @@ pub(super) fn run(
                 if std::mem::take(&mut escape_pause) {
                     input.pressed |= Button::Start.mask();
                 }
+                if let (Some(tools), Scene::Play(modes)) = (&tools, &mut *scene) {
+                    tools.before_tick(modes);
+                }
                 if scene.tick(input, frame.width())
                     && let Some(audio) = &mut audio
                 {

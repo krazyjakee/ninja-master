@@ -388,6 +388,7 @@ pub(crate) struct Strike {
     pub(crate) damage: u8,
     pub(crate) cue: u8,
     pub(crate) shuriken: bool,
+    pub(crate) board: bool,
     /// The air stab: landing sets the player's `+$40` (`$252EA`).
     pub(crate) bounce: bool,
     /// The attack object held until the hit lands (`Combat::land_strikes`):

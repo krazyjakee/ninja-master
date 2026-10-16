@@ -70,6 +70,7 @@ impl Combat {
                     damage: shot.damage,
                     cue: shuriken_hit, // $24DE0
                     shuriken: true,
+                    board: false,
                     bounce: false,
                     hold: None,
                     serial: 0,
@@ -188,6 +189,7 @@ impl Combat {
                 damage: spec.damage,
                 cue,
                 shuriken: false,
+                board: swing.kind == Sword::SurfStab,
                 bounce: matches!(swing.kind, Sword::AirStab | Sword::SurfStab),
                 hold: None,
                 serial: swing.serial,

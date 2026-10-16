@@ -183,7 +183,7 @@ fn mouse_options_scroll_and_return_to_main_menu_focus() {
     let mut title = Title::menu(Front::load(&rom).unwrap());
     settle(&mut title);
     title.menu_event(MenuEvent::Scroll(1));
-    title.menu_event(MenuEvent::Click(100, 175, false)); // Visible Options row.
+    title.menu_event(MenuEvent::Click(100, 159, false)); // Options is the first row after scrolling.
     let mut modes = Modes::new(Box::new(title));
     for _ in 0..100 {
         modes.tick(Input::default());
@@ -226,6 +226,10 @@ fn continue_survives_restart_and_new_game_requires_confirmation() {
     let mut attract = Modes::new(Box::new(demo));
     attract.enable_progress(Some(path.clone()), &rom);
     attract.checkpoint();
+    assert_eq!(
+        attract.profile.data.next_run, 0,
+        "attract playback must not become a profile run"
+    );
     assert!(
         !path.exists(),
         "the attract demo must not create a saved run"

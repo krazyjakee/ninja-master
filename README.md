@@ -144,6 +144,26 @@ Continue is hidden when there is no compatible checkpoint; damaged or
 incompatible files produce a message without starting a game. It is separate
 from the original game-over continues and the eight manual save slots.
 
+## Achievements and statistics
+
+The main menu now includes **Achievements** and **Statistics**, with keyboard,
+controller and mouse navigation. Browse all **49 local achievements** (590 points),
+see locked requirements and unlock notifications, or compare the latest run with
+lifetime Standard and Practice totals. Statistics include active playtime,
+completions, deaths, continues, enemy defeats, shurikens, melee hits, magic,
+collected items and best round times.
+
+Start **New Game** for eligible achievement progress. Automatic **Continue**
+preserves it. Manual save loads, cheats, developer stage starts and simulation
+modifiers mark the run as Practice; display/control settings and ordinary pause
+are allowed. The profile persists in `profile.json` beside your settings and
+protects lifetime totals against replaying old saves.
+
+Achievements are local equivalents of the public RetroAchievements set;
+**they are not submitted to or verified by RetroAchievements**. Account
+integration is unavailable under its current native-port policy. See
+[the complete condition mapping and persistence rules](native/ACHIEVEMENTS.txt).
+
 ## Make it yours
 
 Press **F1** to open the companion panel. The game continues running while the
@@ -171,7 +191,8 @@ where their panels overlap in small windows.
 
 **F12** saves the displayed game viewport at its displayed pixel dimensions and
 aspect ratio, including the game HUD and CRT/scanline effects. Desktop panels,
-the F2 overlay, notifications and letterboxing are excluded. Files go into
+the F2 overlay, desktop notifications and letterboxing are excluded. In-game
+achievement notifications are included. Files go into
 `screenshots/` beside `settings.ini` (or the working directory if no configuration
 folder is available), with unique names. A brief message shows the saved path or
 failure. PNG encoding runs in a background worker; holding F12 saves once.

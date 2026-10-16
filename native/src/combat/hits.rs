@@ -183,6 +183,7 @@ impl PlayerHit {
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct CombatEvents {
+    pub(crate) hits: Vec<crate::profile::Hit>,
     /// Last `plr_event` write made by the object update pass.
     pub player_event: Option<PlayerEvent>,
     /// A non-lethal hit: the hurt state and its voice, including damage 0.

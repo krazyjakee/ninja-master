@@ -153,6 +153,8 @@ pub enum Next {
     Story,
     Title,
     Options,
+    Achievements,
+    Statistics,
     /// `Title_ModeGame`: `Mode_Game`, which starts with the round card.
     Game,
     Continue,
@@ -171,6 +173,12 @@ pub fn go(front: &Front, next: Next) -> ModeChange {
         Next::Story => Box::new(Story::new(front)),
         Next::Title => Box::new(Title::new(front)),
         Next::Options => Box::new(OptionsScreen::new(front)),
+        Next::Achievements => {
+            return ModeChange::Profile(front, crate::profile::ScreenKind::Achievements);
+        }
+        Next::Statistics => {
+            return ModeChange::Profile(front, crate::profile::ScreenKind::Statistics);
+        }
         Next::Game => return ModeChange::NewGame(front),
         Next::Continue => return ModeChange::Continue(front),
         Next::Demo => {
@@ -406,7 +414,7 @@ impl Title {
     fn open_menu(&mut self) {
         self.viewport.selected = self.screen.front.title_selection;
         self.viewport.first = self.screen.front.title_first;
-        self.viewport.reveal(4);
+        self.viewport.reveal(6);
         self.menu = Some(self.viewport.selected);
         self.timer = MENU_TICKS;
         if let Some(art) = self.art.as_mut() {
@@ -433,6 +441,19 @@ impl Title {
                 self.screen.front.title_first = self.viewport.first;
                 self.screen.front.return_to_menu = true;
                 self.screen.leave(Next::Options);
+            }
+            item if item == 2 + usize::from(self.resume_available)
+                || item == 3 + usize::from(self.resume_available) =>
+            {
+                self.screen.front.title_selection = self.viewport.selected;
+                self.screen.front.title_first = self.viewport.first;
+                self.screen.front.return_to_menu = true;
+                self.screen
+                    .leave(if item == 2 + usize::from(self.resume_available) {
+                        Next::Achievements
+                    } else {
+                        Next::Statistics
+                    });
             }
             _ => self.screen.leave(Next::Quit),
         }
@@ -489,7 +510,7 @@ impl Mode for Title {
                     menu.step(step, 2);
                 } else {
                     self.viewport
-                        .step(step, 3 + usize::from(self.resume_available));
+                        .step(step, 5 + usize::from(self.resume_available));
                     self.menu = Some(self.viewport.selected);
                 }
                 if input.pressed(Button::Start)
@@ -536,7 +557,12 @@ impl Mode for Title {
                 if self.resume_available {
                     rows.push("CONTINUE".into());
                 }
-                rows.extend(["OPTIONS".into(), "QUIT".into()]);
+                rows.extend([
+                    "OPTIONS".into(),
+                    "ACHIEVEMENTS".into(),
+                    "STATISTICS".into(),
+                    "QUIT".into(),
+                ]);
                 self.viewport.draw(frame, font, &rows);
                 if !self.message.is_empty() {
                     let text: String = self.message.chars().take(36).collect();
@@ -553,7 +579,7 @@ impl Mode for Title {
     }
     fn menu_context(&mut self, available: bool, status: &str) {
         self.resume_available = available;
-        self.viewport.reveal(3 + usize::from(available));
+        self.viewport.reveal(5 + usize::from(available));
         if self.menu.is_some() {
             self.menu = Some(self.viewport.selected);
         }
@@ -588,7 +614,7 @@ impl Mode for Title {
         let count = if self.confirmation.is_some() {
             2
         } else {
-            3 + usize::from(self.resume_available)
+            5 + usize::from(self.resume_available)
         };
         let menu = self.confirmation.as_mut().unwrap_or(&mut self.viewport);
         match event {

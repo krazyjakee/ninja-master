@@ -105,6 +105,7 @@ struct Carried {
 
 #[derive(Clone)]
 pub struct Combat {
+    pub(crate) journal: crate::profile::CombatJournal,
     /// Expanded display width and playable world span for object lifetimes.
     pub(crate) view_width: usize,
     pub(crate) world_bounds: (i32, i32),
@@ -828,7 +829,20 @@ impl Combat {
                 }
                 let damage = self.attack_damage(attack.object);
                 let spawn = &self.spawns[enemy.spawn];
+                let before = self.enemies[target].health;
                 Self::hurt_enemy(&self.roster, &mut self.enemies[target], spawn, damage, true);
+                if self.enemies[target].health < before {
+                    let kind = if attack.object.shuriken() {
+                        crate::profile::HitKind::Shuriken
+                    } else {
+                        crate::profile::HitKind::Melee
+                    };
+                    event.hits.push(crate::profile::Hit {
+                        target: spawn.kind,
+                        defeated: self.enemies[target].health == 0,
+                        kind,
+                    });
+                }
                 self.spend_projectile_attack(attack.object, event);
             } else {
                 self.spend_projectile_attack(attack.object, event);

@@ -25,6 +25,15 @@ impl Game {
     /// already playing (`$4B02`).
     pub fn load_next(&self, next: StageId) -> Result<Self, String> {
         let mut game = Self::load_stage(&self.rom, next)?;
+        game.run = self.run.clone();
+        game.run.clear_recorded = false;
+        if next.round != self.stage_id.round {
+            game.run.round_ticks = 0;
+            game.run.round_died = false;
+            game.run.round_start_ammo = self.combat.hud.ammo;
+        }
+        game.run.encounter = None;
+        game.run.encounter_finished = false;
         game.combat.inherit_progress(&self.combat);
         game.set_effects(self.stage.effects_enabled);
         game.transitions = self.transitions + 1;
@@ -71,6 +80,7 @@ impl Game {
         self.combat.hud.score += points;
         self.high_score = self.high_score.max(self.combat.hud.score);
         self.award_extra_life();
+        self.track_thresholds();
     }
     /// `Func_01257E`: once per call, a life (and effect `$10`, 1UP) when the
     /// score has reached the next threshold, which then moves up one step.
@@ -90,6 +100,13 @@ impl Game {
     /// A new game (`Mode_Game` states 0..8): `Game_InitSession` sets the
     /// continues, then `start_lives` as below.
     pub fn start_session(&mut self, options: crate::options::GameOptions) {
+        self.run = crate::profile::Run {
+            level: options.level,
+            practice: options.infinite || options.invincible || options.shurikens_disabled(),
+            initial_ammo: options.start_ammo(&self.rom),
+            round_start_ammo: options.start_ammo(&self.rom),
+            ..Default::default()
+        };
         self.options = options;
         self.continues = options.continues(&self.rom);
         self.start_lives();
@@ -127,6 +144,10 @@ impl Game {
         game.options = self.options;
         game.continues = self.continues;
         game.demo_counter = self.demo_counter;
+        game.run = self.run.clone();
+        game.run.stats.continues += 1;
+        game.run.encounter = None;
+        game.run.encounter_finished = false;
         game.round_flags = self.round_flags;
         game.combat.weapons.ninjutsu_selected = self.combat.weapons.ninjutsu_selected;
         game.start_lives();
@@ -196,6 +217,8 @@ impl Game {
         // $11A08/$399D4 reset the door script after every stage reload.
         self.door =
             super::doors::Door::entrance(&self.rom, id, section).expect("validated door script");
+        self.run.encounter = None;
+        self.run.encounter_finished = false;
         self.cast = None;
         self.arena = None;
         self.death = None;
@@ -284,6 +307,8 @@ impl Game {
             section.player_start.0,
             section.player_start.1 + 1,
         );
+        self.run.encounter = None;
+        self.run.encounter_finished = false;
         self.cast = None;
         self.arena = None;
         self.death = None;
@@ -322,6 +347,13 @@ impl Game {
     }
     /// Start `PlayerState_Death` in `state`.
     pub(super) fn start_death(&mut self, state: usize) {
+        if self.death.is_none() {
+            self.run.round_died = true;
+            self.run.stats.deaths += 1;
+        }
+        if let Some(e) = &mut self.run.encounter {
+            e.damaged = true;
+        }
         self.death = Some(crate::death::Death::new(state, self.player.animator.cursor));
     }
     /// `Func_026CCE`: the rider thrown off in a surf death, after the

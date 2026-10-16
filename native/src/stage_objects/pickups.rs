@@ -273,6 +273,7 @@ impl StageObjects {
                     let id = self.tables.pickup_sounds[usize::from(kind)];
                     events.sounds.extend(self.tables.effect(id));
                     events.collected.push(kind);
+                    events.collected_at.push((kind, pickup.x, pickup.y));
                     pickup.mapping = pickup.saved;
                     pickup.step = self.tables.rise_ticks;
                     pickup.motion.vy = self.tables.rise_speed;

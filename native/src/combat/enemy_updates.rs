@@ -243,7 +243,23 @@ impl Combat {
         if strike.serial != 0 {
             enemy.attack_serial = strike.serial;
         }
+        let before = enemy.health;
         Self::hurt_enemy(roster, enemy, spawn, strike.damage, true);
+        if enemy.health < before {
+            event.hits.push(crate::profile::Hit {
+                target: spawn.kind,
+                defeated: enemy.health == 0,
+                kind: if strike.shuriken {
+                    crate::profile::HitKind::Shuriken
+                } else if strike.board {
+                    crate::profile::HitKind::Board
+                } else if strike.bounce {
+                    crate::profile::HitKind::DeathKick
+                } else {
+                    crate::profile::HitKind::Melee
+                },
+            });
+        }
         match enemy.reaction {
             Some(Reaction::Death) if enemy.death_spark => {
                 enemy.hit_spark = Some((strike.origin, true));
@@ -309,5 +325,53 @@ impl Combat {
             enemy.state,
             EnemyState::Dormant | EnemyState::Emerging | EnemyState::Defeated
         )
+    }
+}
+
+#[cfg(test)]
+mod journal_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires a user-supplied cartridge"]
+    fn only_landed_damage_counts_a_hit_and_lethal_damage_counts_once() {
+        let dir = std::env::var_os("NINJA_MASTER_TEST_ROMS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../rom"));
+        let rom = crate::rom::regions::prepare(std::fs::read(dir.join("shinobi3_us.bin")).unwrap())
+            .unwrap();
+        let mut combat = Combat::load_stage(&rom, crate::stage::StageId::FOREST).unwrap();
+        let index = combat
+            .enemies
+            .iter()
+            .position(|e| combat.spawns[e.spawn].kind == 0x14)
+            .unwrap();
+        let enemy = &mut combat.enemies[index];
+        let spawn = &combat.spawns[enemy.spawn];
+        let strike = Strike {
+            origin: (0, 0),
+            damage: 1,
+            cue: 0,
+            shuriken: false,
+            board: false,
+            bounce: false,
+            hold: None,
+            serial: 1,
+        };
+        let mut events = CombatEvents::default();
+        Combat::land_strike(&combat.roster, spawn, enemy, strike, &mut events);
+        assert!(events.hits.is_empty()); // dormant
+        enemy.state = EnemyState::Waiting;
+        enemy.health = 2;
+        Combat::land_strike(&combat.roster, spawn, enemy, strike, &mut events);
+        assert_eq!(events.hits.len(), 1);
+        assert!(!events.hits[0].defeated);
+        Combat::land_strike(&combat.roster, spawn, enemy, strike, &mut events);
+        assert_eq!(events.hits.len(), 1); // hurt immunity
+        enemy.state = EnemyState::Waiting;
+        Combat::land_strike(&combat.roster, spawn, enemy, strike, &mut events);
+        assert_eq!(events.hits.len(), 2);
+        assert!(events.hits[1].defeated);
+        Combat::land_strike(&combat.roster, spawn, enemy, strike, &mut events);
+        assert_eq!(events.hits.len(), 2);
     }
 }

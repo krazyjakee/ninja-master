@@ -741,6 +741,7 @@ impl Combat {
         shot.life = 255;
         shot.high_priority = self.weapons.high_priority;
         shot.order = self.allocate();
+        self.journal.shurikens += 1;
         self.projectiles.push(shot);
         self.weapons.sounds.push(self.sound_commands[0]);
         Some(Attack::Throw)
@@ -914,6 +915,7 @@ impl Combat {
         };
         // $24F24..$24F3A: two steps ahead, 24 px above the feet.
         let order = self.allocate();
+        self.journal.shurikens += 1;
         self.weapons.shots.push(SpreadShot {
             x: (player.0 << 16) + 2 * vx,
             y: (player.1 << 16) + 2 * vy - (24 << 16),
@@ -943,6 +945,8 @@ impl Combat {
         if weapons.ninjutsu_selected != 3 {
             weapons.ninjutsu_uses -= 1;
         }
+        self.journal.ninjutsu += 1;
+        self.journal.mijin |= weapons.ninjutsu_selected == 3;
         Some(usize::from(weapons.ninjutsu_selected))
     }
     /// Kariu's dragons and Mijin's blast: every live enemy whose hitbox is on
@@ -963,6 +967,7 @@ impl Combat {
             }
             if screen.intersects(enemy_hitbox(&self.mappings, enemy)) {
                 // Attacker types $50 and above leave no lethal spark.
+                let before = enemy.health;
                 Self::hurt_enemy(
                     &self.roster,
                     enemy,
@@ -970,6 +975,13 @@ impl Combat {
                     damage,
                     false,
                 );
+                if enemy.health < before {
+                    self.journal.hits.push(crate::profile::Hit {
+                        target: self.spawns[enemy.spawn].kind,
+                        defeated: enemy.health == 0,
+                        kind: crate::profile::HitKind::Magic,
+                    });
+                }
                 hits += 1;
             }
         }

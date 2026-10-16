@@ -202,6 +202,7 @@ pub struct ObjectEvents {
     pub sounds: Vec<u8>,
     /// Contents of the items collected.
     pub collected: Vec<u8>,
+    pub(crate) collected_at: Vec<(u8, i32, i32)>,
     /// Type 1 cleared `$FF0175` bit 0: release a held autoscroll.
     pub release_autoscroll: bool,
     /// A lift trapped the rider against solid terrain.

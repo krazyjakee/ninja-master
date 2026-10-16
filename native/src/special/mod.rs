@@ -205,6 +205,7 @@ pub struct SpecialEvents {
     pub sounds: Vec<u8>,
     /// Health ran out: `Player_Die` (`$21A94`) enters the mounted death.
     pub lethal: bool,
+    pub(crate) damaged: bool,
     /// The combat pass's signals, among them the end guard's
     /// `Signal::NextSubstage` (`$FF0029` bit 1).
     pub signals: Vec<crate::combat::Signal>,
@@ -426,6 +427,7 @@ impl Special {
         combat.mount = Some(self.mount);
         combat.weapons.scroll_speed = self.flow() << 8;
         let hits = self.check(player, combat, terrain);
+        events.damaged = hits.lethal || hits.hit.is_some_and(|hit| hit.damage > 0);
         events.sounds.extend(hits.sound_ids.iter().copied());
         events.signals.extend(hits.signals.iter().copied());
         if hits.player_event == Some(crate::movement::PlayerEvent::Freeze) {

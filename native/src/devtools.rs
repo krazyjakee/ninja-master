@@ -112,8 +112,17 @@ impl DevTools {
         self.steps += 1;
     }
 
+    pub fn before_tick(&self, modes: &mut Modes) {
+        if self.speed != NORMAL_SPEED || self.paused || self.infinite_lives || self.lock_health {
+            modes.mark_practice();
+        }
+    }
+
     /// Cheats that hold a value, applied after every simulation tick.
     pub fn after_tick(&self, modes: &mut Modes) {
+        if self.speed != NORMAL_SPEED || self.paused || self.infinite_lives || self.lock_health {
+            modes.mark_practice();
+        }
         if self.infinite_lives || self.lock_health {
             modes.record(Event::Locks(self.infinite_lives, self.lock_health));
         }
@@ -168,6 +177,7 @@ impl DevTools {
         game.restart_music();
         self.status = format!("loaded slot {} ({})", self.slot + 1, game.stage_id);
         modes.replace(game);
+        modes.loaded_profile_run();
         modes.record(Event::Resume);
     }
 
@@ -188,6 +198,7 @@ impl DevTools {
     /// Raise the next-substage request, as a finished boss or the final
     /// stream exit does: ROUND CLEAR and the round card follow.
     pub fn skip_substage(&mut self, modes: &mut Modes) {
+        modes.mark_practice();
         modes.record(Event::Skip);
         match modes.game_mut() {
             Some(game) => {
@@ -201,6 +212,7 @@ impl DevTools {
     /// Start `id` directly. A running game keeps its score, lives, weapons
     /// and options; from the front end a new NORMAL game starts.
     pub fn warp(&mut self, modes: &mut Modes, id: StageId) {
+        modes.mark_practice();
         let loaded = match modes.game() {
             Some(game) => game.load_next(id).map(|mut next| {
                 next.restart_music();
@@ -216,6 +228,7 @@ impl DevTools {
                 modes.record(Event::Warp(id));
                 self.status = format!("warped to {id}");
                 modes.replace(Box::new(game));
+                modes.loaded_profile_run();
             }
             Err(error) => self.status = format!("warp {id}: {error}"),
         }
@@ -227,6 +240,7 @@ impl DevTools {
     }
     /// Set or clear the power-up as the POW item or a hit would.
     pub fn set_powered(&mut self, modes: &mut Modes, powered: bool) {
+        modes.mark_practice();
         modes.record(Event::Powered(powered));
         let Some(game) = modes.game_mut() else {
             return;
@@ -241,6 +255,7 @@ impl DevTools {
     }
 
     pub fn refill(&mut self, modes: &mut Modes) {
+        modes.mark_practice();
         modes.record(Event::Refill);
         let Some(game) = modes.game_mut() else {
             return;
@@ -252,12 +267,14 @@ impl DevTools {
     }
 
     pub fn set_invincible(&self, modes: &mut Modes, value: bool) {
+        modes.mark_practice();
         modes.record(Event::Invincible(value));
         if let Some(game) = modes.game_mut() {
             game.options.invincible = value;
         }
     }
     pub fn set_infinite(&self, modes: &mut Modes, value: bool) {
+        modes.mark_practice();
         modes.record(Event::Infinite(value));
         if let Some(game) = modes.game_mut() {
             game.options.infinite = value;

@@ -191,6 +191,7 @@ impl Combat {
                         damage: shot.damage,
                         cue: shuriken_hit, // $24DE0
                         shuriken: true,
+                        board: false,
                         bounce: false,
                         hold: None,
                         serial: 0,

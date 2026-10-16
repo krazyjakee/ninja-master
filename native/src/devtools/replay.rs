@@ -20,6 +20,8 @@ pub(crate) struct History {
 #[derive(Clone, Copy)]
 pub(crate) enum Event {
     Tick(Input),
+    RunIdentity(u64),
+    Practice,
     Communication(u8),
     Warp(StageId),
     Skip,
@@ -50,6 +52,14 @@ impl History {
         let mut view_width = None;
         for event in &self.events {
             match *event {
+                Event::Practice => modes.mark_practice(),
+                Event::RunIdentity(id) => {
+                    modes
+                        .game_mut()
+                        .ok_or("run identity has no gameplay")?
+                        .run
+                        .id = id;
+                }
                 Event::Menu(event) => modes.menu_event(event),
                 Event::Options(options) => modes.set_options(options),
                 Event::Session(options, high_score, demo_counter) => {
@@ -167,6 +177,11 @@ impl History {
                     out.push(11);
                     encode_options(options, out);
                 }
+                Event::Practice => out.push(15),
+                Event::RunIdentity(id) => {
+                    out.push(14);
+                    out.extend(id.to_le_bytes());
+                }
                 Event::Session(options, high_score, demo_counter) => {
                     out.push(12);
                     encode_options(options, out);
@@ -237,6 +252,8 @@ impl History {
                 }
                 11 => Event::Options(decode_options(reader)?),
                 12 => Event::Session(decode_options(reader)?, reader.u32()?, reader.u16()?),
+                15 => Event::Practice,
+                14 => Event::RunIdentity(u64::from_le_bytes(reader.take(8)?.try_into().unwrap())),
                 13 => {
                     use crate::menu::MenuEvent;
                     let tag = reader.byte()?;

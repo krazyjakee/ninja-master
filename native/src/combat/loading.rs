@@ -145,6 +145,7 @@ impl Combat {
         }
         let max_health = *rom.get(0x615f).ok_or("missing default health")?;
         Ok(Self {
+            journal: crate::profile::CombatJournal::default(),
             weapon_contacts: Vec::new(),
             spawns,
             enemies,
