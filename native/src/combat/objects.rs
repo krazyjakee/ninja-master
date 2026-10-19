@@ -370,6 +370,14 @@ pub struct Enemy {
     pub(crate) tile: Option<u16>,
     /// Collision box relative to (x, y) when not taken from the mapping.
     pub(crate) body: Option<Hitbox>,
+    /// An armored region relative to (x, y) with its own `Object_CollideL3`
+    /// apart from the body's, which deflects player shurikens
+    /// ([`crate::enemies::HitResponse::Rebound`]): Boss4's hull while a
+    /// weapon part takes the hits (`$2DA58`).
+    pub(crate) armor: Option<Hitbox>,
+    /// The armor's (or a rebounding body's) collision of this object update
+    /// is spent: `Object_CollideList` stops at the first overlap.
+    pub(crate) armor_struck: bool,
     /// Drawn as a list-9 record, such as the 2-1 kite that the `$08`
     /// spawner stands in for. `Objects_BuildSprites` (`$1488`) walks
     /// lists 1..9 in order, so these sprites sit behind every other object.
@@ -398,6 +406,10 @@ pub(crate) struct Strike {
     /// The sword's native attack serial, recorded on the object when the
     /// hit lands ([`Enemy::attack_serial`]); 0 for shurikens.
     pub(crate) serial: u64,
+    /// The shuriken's deflection flag (`$0100`) is set as well: its update
+    /// takes `Func_024AFE`'s branch before the hit test (`loc_024DD0`), so
+    /// it plays the rebound sound, not its hit voice (`$24DE0`).
+    pub(crate) rebound: bool,
 }
 
 impl Enemy {
@@ -440,6 +452,8 @@ impl Enemy {
             parent: None,
             tile: None,
             body: None,
+            armor: None,
+            armor_struck: false,
             back: false,
             order: 0,
         }
@@ -710,6 +724,9 @@ pub struct Projectile {
     /// no collision bit and still tests the terrain where the step ended,
     /// before the shuriken moves on.
     pub(crate) untested: bool,
+    /// An armored object set its deflection flag (`$0100`, [`Strike::rebound`]):
+    /// its next update enters `Func_024AFE` (`loc_024DD0`) where it stands.
+    pub(crate) deflected: bool,
     /// A native collision stand-in with no sprite of its own (Boss7's body
     /// box, whose mapping is the boss's own frame): not drawn, so it takes
     /// no place in the sprite table.
@@ -847,6 +864,7 @@ impl Projectile {
             angle: 0,
             held: None,
             untested: false,
+            deflected: false,
             hidden: false,
             order: 0,
         }

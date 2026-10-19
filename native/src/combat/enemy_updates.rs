@@ -187,6 +187,7 @@ impl Combat {
             | HitResponse::Ignore
             | HitResponse::BodyOnly
             | HitResponse::Reflect
+            | HitResponse::Rebound
             | HitResponse::Collides => return,
             HitResponse::Deflect => {
                 enemy.reaction = Some(Reaction::Deflect);
@@ -271,7 +272,7 @@ impl Combat {
             }
             _ => {}
         }
-        if !strike.shuriken || enemy.reaction != Some(Reaction::Deflect) {
+        if !strike.rebound && (!strike.shuriken || enemy.reaction != Some(Reaction::Deflect)) {
             event.sound_ids.push(strike.cue);
         }
         event.bounce |= strike.bounce;
@@ -299,7 +300,34 @@ impl Combat {
             Self::land_strike(&self.roster, spawn, enemy, strike, event);
             landed.extend(strike.hold);
         }
-        self.free_held_attacks(&landed);
+        self.free_held_attacks(&landed, event);
+    }
+    /// `$2DA58`: an armored region of `enemy` with its own
+    /// `Object_CollideL3` ([`Enemy::armor`], or its body while it answers
+    /// [`HitResponse::Rebound`]) meets a player shuriken's `hitbox`. Its
+    /// first overlap in an object update clears the shuriken's hit bit and
+    /// sets its deflection flag (`$2DB10`: `andi.w #$BFFF` / `ori.w #$100`);
+    /// the shuriken still meets the objects after it, the body included.
+    pub(super) fn armor_meets(
+        roster: &Roster,
+        spawns: &[Spawn],
+        mappings: &BTreeMap<u16, Mapping>,
+        enemy: &mut Enemy,
+        hitbox: Hitbox,
+    ) -> bool {
+        if enemy.armor_struck || !Self::hittable(enemy) {
+            return false;
+        }
+        let area = match (enemy.armor, roster.hit(spawns[enemy.spawn].kind, enemy)) {
+            (_, HitResponse::Pass) => return false,
+            (Some(armor), _) => {
+                armor.placed(enemy.x, enemy.y, enemy.facing_left, enemy.vertical_flip())
+            }
+            (None, HitResponse::Rebound) => enemy_hitbox(mappings, enemy),
+            (None, _) => return false,
+        };
+        enemy.armor_struck = hitbox.collides(area);
+        enemy.armor_struck
     }
     /// A weapon target without a hit waiting from the last pass: one
     /// `Object_CollideL3` overlap per object update.
@@ -356,6 +384,7 @@ mod journal_tests {
             bounce: false,
             hold: None,
             serial: 1,
+            rebound: false,
         };
         let mut events = CombatEvents::default();
         Combat::land_strike(&combat.roster, spawn, enemy, strike, &mut events);

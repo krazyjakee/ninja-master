@@ -115,6 +115,12 @@ pub(crate) enum HitResponse {
     ///
     /// [`Turn`]: crate::combat::Turn
     Reflect,
+    /// `$2DB10`/`$2FE40` (Boss4's armor): the object clears the weapon's
+    /// hit bit (`$4000`) and sets its deflection flag (`$0100`), so nothing
+    /// is damaged or spent and the weapon meets later objects. A shuriken's
+    /// next update enters `Func_024AFE` and rebounds; the sword ignores the
+    /// flag. See `Combat::armor_meets`.
+    Rebound,
     /// `Object_CollideL3` alone, as a list-4 object runs it (the 3-3 spit
     /// balls, `loc_02CB2E`): the weapon collides and is spent, no damage is
     /// taken, and the body does not touch the player (the handler's own

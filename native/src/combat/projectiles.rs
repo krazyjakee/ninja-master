@@ -16,15 +16,20 @@ impl Combat {
             ShurikenTerrain::Splash => splashes.push((shot.x, shot.y, shot.leftward())),
             ShurikenTerrain::Leave => shot.alive = false,
             ShurikenTerrain::Wall => {
-                walls.push(WallHit {
-                    at,
-                    velocity: ((shot.velocity_x << 16) + shot.motion.vx, shot.motion.vy),
-                    mapping: shot.mapping,
-                    high_priority: shot.high_priority,
-                    order: shot.order,
-                });
+                walls.push(Self::shuriken_stop(shot));
                 shot.alive = false;
             }
+        }
+    }
+    /// Where a thrown shuriken stands and its 16.16 velocity, for
+    /// `Combat::strike_wall` or `Combat::rebound_shuriken`.
+    fn shuriken_stop(shot: &Projectile) -> WallHit {
+        WallHit {
+            at: (shot.x, shot.y),
+            velocity: ((shot.velocity_x << 16) + shot.motion.vx, shot.motion.vy),
+            mapping: shot.mapping,
+            high_priority: shot.high_priority,
+            order: shot.order,
         }
     }
     /// $18BC pushes a freed record on the free-list head without clearing
@@ -49,7 +54,10 @@ impl Combat {
     ) {
         let view = self.screen_view(camera.0);
         let shuriken_hit = self.rules.cues.get(SoundEvent::ShurikenHit);
+        let bounce =
+            (!self.weapons.powered).then(|| self.rules.cues.get(SoundEvent::ShurikenBounce));
         let mut walls = Vec::new();
+        let mut rebounds = Vec::new();
         let mut splashes = Vec::new();
         for shot in &mut self.projectiles {
             if shot.enemy != enemy_shots {
@@ -147,6 +155,14 @@ impl Combat {
                     continue;
                 }
             }
+            if !shot.enemy && std::mem::take(&mut shot.deflected) {
+                // `loc_024DD0`: the deflection flag comes before the hit
+                // and terrain tests.
+                shot.untested = false;
+                rebounds.push(Self::shuriken_stop(shot));
+                shot.alive = false;
+                continue;
+            }
             if !shot.enemy && std::mem::take(&mut shot.untested) {
                 // Its hit held and did not land: `Shuriken_Update` found
                 // no collision bit (`loc_024DD0`) and tests the terrain
@@ -168,14 +184,25 @@ impl Combat {
                 }
                 let hitbox = Self::shot_box(&self.mappings, shot);
                 for enemy in &mut self.enemies {
+                    if shot.high_priority != enemy.high_priority {
+                        continue;
+                    }
+                    // The armor's own `Object_CollideL3` runs first (`$2DA58`).
+                    if Self::armor_meets(&self.roster, &self.spawns, &self.mappings, enemy, hitbox)
+                    {
+                        shot.deflected = true;
+                    }
                     if !Self::attack_targetable(&self.roster, &self.spawns, enemy)
-                        || shot.high_priority != enemy.high_priority
                         || !hitbox.collides(enemy_hitbox(&self.mappings, enemy))
                     {
                         continue;
                     }
                     let kind = self.spawns[enemy.spawn].kind;
-                    if self.roster.hit(kind, enemy) == HitResponse::Reflect {
+                    let response = self.roster.hit(kind, enemy);
+                    if response == HitResponse::Rebound {
+                        continue;
+                    }
+                    if response == HitResponse::Reflect {
                         // `Shuriken_Init` left +$28 0 or $E. The guard's
                         // shield and Boss2's field select different turns.
                         let direction = if shot.leftward() { 0xe } else { 0 };
@@ -195,6 +222,7 @@ impl Combat {
                         bounce: false,
                         hold: None,
                         serial: 0,
+                        rebound: shot.deflected,
                     };
                     shot.held = Self::strike_enemy(
                         &self.roster,
@@ -205,10 +233,15 @@ impl Combat {
                         event,
                     );
                     shot.alive = shot.held.is_some();
+                    if !shot.alive && shot.deflected {
+                        // `Func_024AFE`'s sound, then the hit frees it.
+                        event.sound_ids.extend(bounce);
+                    }
                     break;
                 }
-                // Spent or waiting for its hit, which frees it first.
-                if shot.alive && shot.held.is_none() {
+                // Spent, waiting for its hit (which frees it first) or
+                // deflected: its next update rebounds before any test.
+                if shot.alive && shot.held.is_none() && !shot.deflected {
                     Self::shuriken_terrain_at(terrain, shot, &mut walls, &mut splashes);
                 }
             } else if std::mem::take(&mut shot.walled) {
@@ -316,6 +349,9 @@ impl Combat {
         }
         for wall in walls {
             self.strike_wall(wall, event);
+        }
+        for hit in rebounds {
+            self.rebound_shuriken(hit, event);
         }
     }
 }

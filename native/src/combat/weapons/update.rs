@@ -12,7 +12,10 @@ impl Combat {
     ) {
         let view = self.screen_view(camera.0);
         let shuriken_hit = self.rules.cues.get(SoundEvent::ShurikenHit);
+        let bounce =
+            (!self.weapons.powered).then(|| self.rules.cues.get(SoundEvent::ShurikenBounce));
         let mut walls = Vec::new();
+        let mut rebounds = Vec::new();
         let mut splashes = Vec::new();
         let steering = (self.weapons.spin_frames, self.weapons.spread);
         for shot in &mut self.weapons.shots {
@@ -27,6 +30,20 @@ impl Combat {
                 shot.flips = Some(flips);
                 shot.velocity_x = vx;
                 shot.velocity_y = vy;
+            }
+            // `loc_024DD0`: a deflection flag comes before the hit and
+            // terrain tests.
+            if std::mem::take(&mut shot.deflected) {
+                shot.untested = false;
+                rebounds.push(WallHit {
+                    at: (shot.x >> 16, shot.y >> 16),
+                    velocity: (shot.velocity_x, shot.velocity_y),
+                    mapping: shot.mapping,
+                    high_priority: shot.high_priority,
+                    order: shot.order,
+                });
+                shot.age = u16::MAX;
+                continue;
             }
             // Its held hit did not land: the terrain test where it met the
             // object comes before the next step (`loc_024DD0`).
@@ -43,26 +60,38 @@ impl Combat {
             shot.y += shot.velocity_y;
             let (x, y) = (shot.x >> 16, shot.y >> 16);
             let hitbox = Self::spread_box(&self.mappings, shot);
-            let target = self.enemies.iter_mut().find(|enemy| {
-                Self::attack_targetable(&self.roster, &self.spawns, enemy)
-                    && enemy.high_priority == shot.high_priority
-                    && hitbox.collides(enemy_hitbox(&self.mappings, enemy))
-                    && {
-                        let kind = self.spawns[enemy.spawn].kind;
-                        if self.roster.hit(kind, enemy) == HitResponse::Reflect {
-                            // $12984 turns shurikens off the 4-1 guard's
-                            // shield; $2B126 turns them off Boss2's field.
-                            shot.turn = shot.turn.or(Some(if kind == 0x18 {
-                                Turn::guard(shot.direction, self.ticks)
-                            } else {
-                                Turn::away(shot.direction, y, enemy.y)
-                            }));
-                            false
+            let mut target = None;
+            for enemy in &mut self.enemies {
+                if enemy.high_priority != shot.high_priority {
+                    continue;
+                }
+                // The armor's own `Object_CollideL3` runs first (`$2DA58`).
+                if Self::armor_meets(&self.roster, &self.spawns, &self.mappings, enemy, hitbox) {
+                    shot.deflected = true;
+                }
+                if !Self::attack_targetable(&self.roster, &self.spawns, enemy)
+                    || !hitbox.collides(enemy_hitbox(&self.mappings, enemy))
+                {
+                    continue;
+                }
+                let kind = self.spawns[enemy.spawn].kind;
+                match self.roster.hit(kind, enemy) {
+                    HitResponse::Rebound => {}
+                    HitResponse::Reflect => {
+                        // $12984 turns shurikens off the 4-1 guard's
+                        // shield; $2B126 turns them off Boss2's field.
+                        shot.turn = shot.turn.or(Some(if kind == 0x18 {
+                            Turn::guard(shot.direction, self.ticks)
                         } else {
-                            true
-                        }
+                            Turn::away(shot.direction, y, enemy.y)
+                        }));
                     }
-            });
+                    _ => {
+                        target = Some(enemy);
+                        break;
+                    }
+                }
+            }
             if let Some(enemy) = target {
                 // +$06 = 1 at $24ECC, 3 powered.
                 let strike = Strike {
@@ -74,6 +103,7 @@ impl Combat {
                     bounce: false,
                     hold: None,
                     serial: 0,
+                    rebound: shot.deflected,
                 };
                 shot.held = Self::strike_enemy(
                     &self.roster,
@@ -84,11 +114,16 @@ impl Combat {
                     event,
                 );
                 if shot.held.is_none() {
+                    if shot.deflected {
+                        // `Func_024AFE`'s sound, then the hit frees it.
+                        event.sound_ids.extend(bounce);
+                    }
                     shot.age = u16::MAX;
                 }
             }
-            // Spent or waiting for its hit, which frees it first.
-            if shot.age != u16::MAX && shot.held.is_none() {
+            // Spent, waiting for its hit (which frees it first) or
+            // deflected: its next update rebounds before any test.
+            if shot.age != u16::MAX && shot.held.is_none() && !shot.deflected {
                 Self::spread_terrain_at(terrain, shot, &mut walls, &mut splashes);
             }
             if shot.age == u16::MAX {
@@ -110,6 +145,9 @@ impl Combat {
         }
         for wall in walls {
             self.strike_wall(wall, event);
+        }
+        for hit in rebounds {
+            self.rebound_shuriken(hit, event);
         }
         self.weapons.swing_box = None;
 
@@ -175,13 +213,18 @@ impl Combat {
         // then excludes for every later object this frame: one enemy,
         // the first in list order, per update.
         // Boss2's field clears the sword's bit 14 (`$2B126`): it is
-        // neither spent nor heard, and meets the next object.
+        // neither spent nor heard, and meets the next object. Boss4's
+        // armor does the same (`$2DB10`), and the sword never reads the
+        // deflection flag it sets.
         let target = self.enemies.iter_mut().find(|enemy| {
             Self::attack_targetable(&self.roster, &self.spawns, enemy)
                 && enemy.high_priority == self.weapons.high_priority
                 && enemy.attack_serial != swing.serial
                 && hitbox.collides(enemy_hitbox(&self.mappings, enemy))
-                && self.roster.hit(self.spawns[enemy.spawn].kind, enemy) != HitResponse::Reflect
+                && !matches!(
+                    self.roster.hit(self.spawns[enemy.spawn].kind, enemy),
+                    HitResponse::Reflect | HitResponse::Rebound
+                )
         });
         if let Some(enemy) = target {
             let strike = Strike {
@@ -193,6 +236,7 @@ impl Combat {
                 bounce: matches!(swing.kind, Sword::AirStab | Sword::SurfStab),
                 hold: None,
                 serial: swing.serial,
+                rebound: false,
             };
             swing.held = Self::strike_enemy(
                 &self.roster,
@@ -268,6 +312,21 @@ impl Combat {
         if self.weapons.powered {
             return;
         }
+        self.shed_shuriken(wall, self.ticks % 2 == 1, event);
+    }
+    /// `loc_024DD0`: a shuriken whose deflection flag an armored object set
+    /// (`$2DB10`, `$2FE40`) clears it and enters `Func_024AFE` where it
+    /// stands, before its hit and terrain tests. Powered (`$24B04`) it is
+    /// removed silently; otherwise it is always knocked back.
+    pub(in crate::combat) fn rebound_shuriken(&mut self, hit: WallHit, event: &mut CombatEvents) {
+        if self.weapons.powered {
+            return;
+        }
+        self.shed_shuriken(hit, true, event);
+    }
+    /// A shuriken stuck in a wall (`loc_024C6C`) or knocked back
+    /// (`Func_024AFE`, `knock`).
+    fn shed_shuriken(&mut self, wall: WallHit, knock: bool, event: &mut CombatEvents) {
         let (vx, vy) = wall.velocity;
         let leftward = vx < 0;
         let mut spent = SpentShuriken {
@@ -281,7 +340,7 @@ impl Combat {
             high_priority: wall.high_priority,
             order: wall.order,
         };
-        if self.ticks % 2 == 1 {
+        if knock {
             // Func_024AFE: effect 8, a quarter of the speed back, 4 px/tick
             // up ($3A 32) or, if it was rising, no vertical speed ($3A 24),
             // under $FF0014 gravity; +$28 is the spread's (or throw's)

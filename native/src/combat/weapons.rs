@@ -268,6 +268,8 @@ pub struct SpreadShot {
     /// Its held hit did not land: the terrain test of the step's end is
     /// still to come ([`Projectile::untested`]).
     untested: bool,
+    /// Its deflection flag is set ([`Projectile::deflected`]).
+    deflected: bool,
     /// `obj_tile` bit 11 from the player's facing (`$24EBA`).
     facing_left: bool,
     /// Allocation serial ([`Projectile::order`]).
@@ -931,6 +933,7 @@ impl Combat {
             flips: None,
             held: None,
             untested: false,
+            deflected: false,
             facing_left,
             order,
         });
@@ -1009,5 +1012,7 @@ impl Combat {
     }
 }
 
+#[cfg(test)]
+mod armor_tests;
 #[cfg(test)]
 mod roadmap_tests;

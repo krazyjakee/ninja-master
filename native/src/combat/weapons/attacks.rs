@@ -147,10 +147,20 @@ impl Combat {
     /// `$252E4`), except the dash kick, which only plays its sound
     /// (`$254D8`) and stays with bit 14 hiding it from the list-6 and
     /// list-4 checks until its update. A replaced sword ends either way.
-    pub(in crate::combat) fn free_held_attacks(&mut self, landed: &[u32]) {
+    ///
+    /// A landed shuriken whose deflection flag is also set enters
+    /// `Func_024AFE` first (its rebound sound, unless powered), and
+    /// `PlayerAttack_Run` then frees it for the hit bit (`$24A9E`).
+    pub(in crate::combat) fn free_held_attacks(
+        &mut self,
+        landed: &[u32],
+        event: &mut CombatEvents,
+    ) {
+        let mut rebounds = 0;
         for shot in self.projectiles.iter_mut().filter(|shot| !shot.enemy) {
             if let Some(hold) = shot.held.take() {
                 if landed.contains(&hold) {
+                    rebounds += usize::from(shot.alive && shot.deflected);
                     shot.alive = false;
                 } else {
                     shot.untested = shot.alive;
@@ -160,11 +170,18 @@ impl Combat {
         for shot in &mut self.weapons.shots {
             if let Some(hold) = shot.held.take() {
                 if landed.contains(&hold) {
+                    rebounds += usize::from(shot.deflected);
                     shot.age = u16::MAX;
                 } else {
                     shot.untested = true;
                 }
             }
+        }
+        if !self.weapons.powered {
+            let bounce = self.rules.cues.get(SoundEvent::ShurikenBounce);
+            event
+                .sound_ids
+                .extend(std::iter::repeat_n(bounce, rebounds));
         }
         self.weapons.drop_spent_shots();
         self.weapons.held_sword = None;
@@ -175,6 +192,24 @@ impl Combat {
             if swing.kind != Sword::DashKick {
                 self.weapons.swing = None;
             }
+        }
+    }
+    /// `$2FE40`, `loc_0301EE`: a part set the attack's deflection flag
+    /// (`$0100`). A shuriken rebounds on its next update; the sword never
+    /// reads the flag.
+    pub(in crate::combat) fn deflect_attack(&mut self, object: AttackObject) {
+        match object {
+            AttackObject::Shot(index) => {
+                if let Some(shot) = self.projectiles.get_mut(index) {
+                    shot.deflected = true;
+                }
+            }
+            AttackObject::Spread(index) => {
+                if let Some(shot) = self.weapons.shots.get_mut(index) {
+                    shot.deflected = true;
+                }
+            }
+            AttackObject::Sword => {}
         }
     }
     /// Drop spent attacks after stage objects (after `spend_attack`, which

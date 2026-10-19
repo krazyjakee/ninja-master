@@ -475,6 +475,7 @@ impl Combat {
         self.update_enemies(player, facing_left, camera, terrain, &mut event);
         for enemy in &mut self.enemies {
             enemy.struck = false;
+            enemy.armor_struck = false;
         }
         self.land_strikes(&mut event);
         // Func_01CC0A: list 4.
@@ -484,7 +485,7 @@ impl Combat {
             self.run_attacks(player, facing_left, camera, terrain, &mut event);
         }
         // Shootable list-4 objects' own `Object_CollideL3`.
-        self.hit_weapon_parts(camera, &mut event);
+        self.hit_weapon_parts(&mut event);
         self.shoot_down(&mut event);
         // A shot that touched the body and expired in the same update is
         // still tested by the damage check below.
@@ -812,7 +813,11 @@ impl Combat {
         }
         self.weapons.drop_spent_shots();
     }
-    fn hit_weapon_parts(&mut self, camera: (i32, i32), event: &mut CombatEvents) {
+    /// Boss4's parts' own `Object_CollideL3`: each meets the first player
+    /// weapon over it. A forwarding part hurts the boss; an armored one
+    /// (`$2FE40`, `loc_0301EE`) sets the weapon's deflection flag, which
+    /// leaves it to meet the parts after it.
+    fn hit_weapon_parts(&mut self, event: &mut CombatEvents) {
         let mut attacks = self.player_attacks();
         for index in 0..self.weapon_contacts.len() {
             let contact = self.weapon_contacts[index];
@@ -847,8 +852,8 @@ impl Combat {
                 }
                 self.spend_projectile_attack(attack.object, event);
             } else {
-                self.spend_projectile_attack(attack.object, event);
-                self.shot_spark((contact.area.x, contact.area.y), true, camera, event);
+                self.deflect_attack(attack.object);
+                continue;
             }
             attacks.remove(i);
         }

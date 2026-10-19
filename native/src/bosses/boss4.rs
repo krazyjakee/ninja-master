@@ -696,7 +696,9 @@ impl Boss4 {
     /// After the parts' update: a weak part under water hands the hits on
     /// (its `+$2A` destroyed flag, which the routines test), and the
     /// collision box is the weak part's while it takes hits, else the
-    /// hull's.
+    /// hull's. The hull and the parts collide apart (`$2DA58`, `$2FD1E`):
+    /// while the weak part takes the hits the hull stays as the record's
+    /// [`Enemy::armor`], which deflects shurikens ahead of the part.
     fn target(&self, cx: &Ctx, e: &mut Enemy) {
         if e.phase == PART_C && destroyed(cx.effects, GUN_PART) {
             e.phase = ARM;
@@ -714,13 +716,16 @@ impl Boss4 {
             _ => None,
         };
         e.vars[OPEN] = 0;
-        e.body = Some(self.hulls[usize::from(e.phase != GUNBOAT)]);
+        let hull = self.hulls[usize::from(e.phase != GUNBOAT)];
+        e.body = Some(hull);
+        e.armor = None;
         if let Some(n) = weak {
             if let Some(p) = parts::part_ref(cx.effects, n) {
                 e.step_x = p.counter;
             }
             if let Some((area, immunity)) = self.weak_part(cx, e, n) {
                 e.body = Some(area);
+                e.armor = Some(hull);
                 e.vars[OPEN] = 1;
                 e.vars[COOL] = i32::from(immunity);
             }
@@ -813,11 +818,13 @@ impl Behavior for Boss4 {
             // Not collidable ($2E1EA, $2ED22 set obj_flags bit 13).
             0 | 0x2c => HitResponse::Pass,
             r if r >= 0x84 => HitResponse::Pass,
-            // $2DB10: the hull turns weapons away until the arm is gone,
-            // and during routine $30.
-            _ if weak && enemy.vars[OPEN] == 0 => HitResponse::Deflect,
+            // $2DB10: the hull sets the weapon's deflection flag until the
+            // arm is gone, and during routine $30 (after its immunity
+            // test). While a weak part is open the body is the part's and
+            // the hull is the armor (`Combat::armor_meets`).
+            _ if weak && enemy.vars[OPEN] == 0 => HitResponse::Rebound,
             _ if enemy.vars[COOL] > 0 => HitResponse::Ignore,
-            0x30 if !weak => HitResponse::Deflect,
+            0x30 if !weak => HitResponse::Rebound,
             _ => HitResponse::Accept,
         }
     }
