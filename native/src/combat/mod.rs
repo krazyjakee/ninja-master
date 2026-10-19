@@ -25,7 +25,7 @@ pub use hits::{
 };
 pub use mapping::Hitbox;
 pub(crate) use mapping::{
-    Mapping, draw_pieces, enemy_hitbox, mapping_hitbox, object_visible, pose_hitbox,
+    Mapping, draw_pieces, enemy_hitbox, mapping_hitbox, object_visible, pose_hitbox, sprite_span,
 };
 pub(crate) use objects::{
     Blast, Launch, MechShot, Motion, Reaction, ShotBox, Strike, Sway, Turn, advance,

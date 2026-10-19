@@ -422,7 +422,11 @@ impl Guard {
                     e.hurt_routine = 0x50;
                     e.death_routine = 0x54;
                     e.vars[G_FLASH] = -1;
-                    e.x = cx.camera.0 + self.enter.0;
+                    // Behind the left edge with its jet-skis, clear of a
+                    // widened view (issue #32).
+                    e.x = cx
+                        .entry_x(self.enter.0, &[self.enter.2], e.facing_left)
+                        .min(cx.entry_x(self.enter.0, &self.escort.ski_poses(), false));
                     e.y = cx.camera.1 + self.enter.1;
                     e.mapping = self.enter.2;
                     e.tile = Some(0);

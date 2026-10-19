@@ -53,6 +53,26 @@ pub(crate) struct Mapping {
     pub(crate) bounds: Hitbox,
     pub(crate) pieces: Vec<SpritePiece>,
 }
+/// Horizontal extent `(first, last)` of the pieces of `frames` about the
+/// object's X, mirrored like a `left`-facing object's sprite; it always
+/// includes the origin.
+pub(crate) fn sprite_span(
+    mappings: &BTreeMap<u16, Mapping>,
+    frames: &[u16],
+    left: bool,
+) -> (i32, i32) {
+    let mut span = (0, 0);
+    for piece in frames
+        .iter()
+        .filter_map(|id| mappings.get(id))
+        .flat_map(|m| &m.pieces)
+    {
+        let (lo, hi) = (piece.x, piece.x + piece.width as i32 * 8);
+        let (lo, hi) = if left { (-hi, -lo) } else { (lo, hi) };
+        span = (span.0.min(lo), span.1.max(hi));
+    }
+    span
+}
 /// Hitbox of mapping `id` placed at (x, y); none when the id has no record.
 pub(crate) fn mapping_hitbox(
     mappings: &BTreeMap<u16, Mapping>,

@@ -43,7 +43,9 @@ impl Flotsam {
     }
     /// `Func_016914`, followed by the debris's first `Func_01776E` call.
     fn launch(&self, cx: &mut Ctx) {
-        let (x, y) = (cx.camera.0 + self.offset.0, cx.camera.1 + self.offset.1);
+        // Beyond the right edge, clear of a widened view (issue #32).
+        let x = cx.entry_x(self.offset.0, &[self.mapping, self.mapping + 1], false);
+        let y = cx.camera.1 + self.offset.1;
         let mut debris = Projectile::new(x, y, 0, true, self.mapping, self.mines.damage);
         debris.passes_terrain = true;
         // Func_01776E: freed left of the camera, not by the ±256 px test

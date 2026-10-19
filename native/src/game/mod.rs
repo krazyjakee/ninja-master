@@ -1009,3 +1009,5 @@ impl Game {
 
 #[cfg(test)]
 mod roadmap_tests;
+#[cfg(test)]
+mod surf_view_tests;

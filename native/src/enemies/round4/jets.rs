@@ -26,6 +26,8 @@ pub(crate) struct Squadron {
     mapping: u16,
     speed: i32,
     mines: Mines,
+    /// Every frame a released rider draws at its X ([`RiderParts::frames`]).
+    frames: [u16; 7],
 }
 impl Squadron {
     pub(super) fn load(rom: &[u8], mines: Mines) -> Result<Self> {
@@ -42,6 +44,7 @@ impl Squadron {
             mapping: word(rom, 0x1738c)?,
             speed: signed(rom, 0x17380)? << 16,
             mines,
+            frames: RiderParts::load(rom)?.frames,
         })
     }
     /// `Func_017348`. `Frame_Counter & 1` (the `$60` heights) is the
@@ -57,7 +60,9 @@ impl Squadron {
         let kind = self.kinds[usize::from(mode != 0)];
         // The $6C's own `Object_SetTileBase($70)` tile, copied to the rider.
         let tile = cx.tile_base(0x70);
-        let (x, y) = (cx.camera.0 + self.x_offset, cx.camera.1 + height);
+        // Behind the left edge, clear of a widened view (issue #32).
+        let x = cx.entry_x(self.x_offset, &self.frames, true);
+        let y = cx.camera.1 + height;
         let count = e.vars[SQ_COUNT];
         let Some(rider) = cx.spawn(kind, x, y) else {
             return;
@@ -164,6 +169,10 @@ struct RiderParts {
     debris_first: u16,
     debris_gravity: i32,
     sound: u8,
+    /// The rider's poses (`$6C`'s, the `$70` sweep, the `$60` gun pose)
+    /// and the wake and thruster parts drawn at its X: what must clear a
+    /// widened view's edge before it is parked, turned or freed there.
+    frames: [u16; 7],
 }
 impl RiderParts {
     pub(super) fn load(rom: &[u8]) -> Result<Self> {
@@ -199,6 +208,15 @@ impl RiderParts {
             debris_first: word(rom, 0x17a26)?,
             debris_gravity: word_i(rom, 0x17a1c)?,
             sound: byte(rom, 0x174b3)?,
+            frames: [
+                word(rom, 0x1738c)?,
+                word(rom, 0x17512)?,
+                word(rom, 0x17c7c)?,
+                word(rom, 0x17ad6)?,
+                word(rom, 0x17ad6)? - 1,
+                word(rom, 0x1787e)?,
+                word(rom, 0x17884)?,
+            ],
         })
     }
 }
@@ -307,6 +325,11 @@ impl Jet {
     }
     fn death_routine(&self) -> u16 {
         self.hurt_routine() + 4
+    }
+    /// Camera + `offset`, the cartridge's off-screen X for parking, turning
+    /// and freeing the rider, moved beyond a widened view ([`Ctx::entry_x`]).
+    fn edge(&self, cx: &Ctx, offset: i32, e: &Enemy) -> i32 {
+        cx.entry_x(offset, &self.parts.frames, e.facing_left)
     }
     /// `Func_01768C`: bob about the flight line.
     fn bob(&self, cx: &Ctx, e: &mut Enemy) {
@@ -438,7 +461,7 @@ impl Jet {
         }
         let thruster = e.vars[J_THRUSTER] as u16;
         if thruster != 0 {
-            if e.routine >= 0x20 || e.x > cx.camera.0 + self.parts.exit {
+            if e.routine >= 0x20 || e.x > self.edge(cx, self.parts.exit, e) {
                 e.vars[J_THRUSTER] = 0;
             } else {
                 // $17A9C: the part follows the rider.
@@ -493,7 +516,7 @@ impl Jet {
                     }
                     8 => {
                         // $174BA
-                        if cx.camera.0 + self.parts.exit >= e.x {
+                        if self.edge(cx, self.parts.exit, e) >= e.x {
                             return;
                         }
                         stop(e);
@@ -504,7 +527,7 @@ impl Jet {
                     }
                     0x0c => {
                         // $174EC: wait off the right edge, then sweep left.
-                        e.x = cx.camera.0 + self.parts.exit;
+                        e.x = self.edge(cx, self.parts.exit, e);
                         if count_down(&mut e.vars[J_TIMER]) {
                             return;
                         }
@@ -559,7 +582,7 @@ impl Jet {
                         }
                         self.bob(cx, e);
                         self.bomb(cx, e);
-                        if cx.camera.0 + self.far_exit >= e.x {
+                        if self.edge(cx, self.far_exit, e) >= e.x {
                             return;
                         }
                         stop(e);
@@ -619,7 +642,7 @@ impl Jet {
                     }
                     0x0c => {
                         // $17C40: wait off the left edge.
-                        e.x = cx.camera.0 - 48;
+                        e.x = self.edge(cx, -48, e);
                         if count_down(&mut e.vars[J_TIMER]) {
                             return;
                         }
@@ -643,11 +666,11 @@ impl Jet {
                         if !self.gun(cx, e) && !count_down(&mut e.vars[J_TIMER]) {
                             e.vars[J_SHOTS] = self.burst;
                         }
-                        if cx.camera.0 + self.cross_exit >= e.x {
+                        if self.edge(cx, self.cross_exit, e) >= e.x {
                             return;
                         }
                         stop(e);
-                        e.x = cx.camera.0 + self.parts.exit;
+                        e.x = self.edge(cx, self.parts.exit, e);
                         e.motion.vx = self.back_vx;
                         e.routine = 0x14;
                         continue;
@@ -658,7 +681,7 @@ impl Jet {
                             return;
                         }
                         self.bob(cx, e);
-                        if cx.camera.0 + self.back_exit < e.x {
+                        if self.edge(cx, self.back_exit, e) < e.x {
                             return;
                         }
                         e.vars[J_PASSES] -= 1;

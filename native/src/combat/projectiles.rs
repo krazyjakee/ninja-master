@@ -282,7 +282,15 @@ impl Combat {
             // screen centre on either axis. Specialized handlers may also
             // install an explicit lifetime.
             let outside = if shot.left_edge_only {
-                shot.x < camera.0 + view.0
+                // Freed left of the camera (`Func_01776E`); a widened view
+                // waits for its whole sprite to clear that edge (issue #32).
+                let clear = if view.1 - view.0 == crate::WIDTH as i32 {
+                    0
+                } else {
+                    let (frame, flip, _) = shot.drawn_frame();
+                    super::sprite_span(&self.mappings, &[frame], flip).1
+                };
+                shot.x < camera.0 + view.0 - clear
             } else if shot.enemy {
                 shot.offscreen = outside_view_in((shot.x, shot.y), camera, view);
                 false

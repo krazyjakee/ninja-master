@@ -13,7 +13,7 @@
 //! guard's position before the guard's motion step.
 use super::splash;
 use crate::{
-    combat::{Effect, EffectKind, Enemy, ambient},
+    combat::{Effect, EffectKind, Enemy},
     enemies::Ctx,
     rom::{Result, byte, long, signed, word, word_i},
 };
@@ -94,6 +94,11 @@ impl Escort {
             sway: signed(rom, 0x14692)?,
         })
     }
+    /// Every jet-ski pose, unflipped as [`Self::part`] draws them.
+    pub(super) fn ski_poses(&self) -> [u16; 4] {
+        let [a, b] = self.skis;
+        [a.poses[0], a.poses[1], b.poses[0], b.poses[1]].map(|pose| self.pose_base + pose)
+    }
     /// Routine 0 (`$13FE6`): both jet-skis at the guard, `Func_01DDB2`'s
     /// tile word 0.
     pub(super) fn enter(&self, cx: &mut Ctx, e: &Enemy) {
@@ -173,10 +178,10 @@ impl Escort {
             PAUSE => self.pause(cx, part),
             LEAVE => {
                 // $14612: freed once off screen (`obj_flags` bit 7 of
-                // the last update).
+                // the last update), beyond a widened view's edges too.
                 self.spray(cx, part, ski);
                 self.pose(part, ski);
-                if ambient::off_screen((part.x, part.y), cx.camera) {
+                if cx.outside_view(part.x, part.y) {
                     part.alive = false;
                     return;
                 }

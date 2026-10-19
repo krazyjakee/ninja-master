@@ -143,25 +143,15 @@ pub(crate) fn small_blast(
 }
 
 impl Ctx<'_> {
-    /// Keep screen-edge entrances beyond the expanded view, allowing for
-    /// the whole sprite rather than just its origin. Original-width play
-    /// retains the cartridge's entry coordinates.
+    /// Keep screen-edge entrances, exits and off-screen parking beyond the
+    /// expanded view, allowing for the whole sprite of `frames` rather than
+    /// just its origin. `offset` is the cartridge's camera-relative X, left
+    /// of the screen when negative; original-width play retains it.
     pub(crate) fn entry_x(&self, offset: i32, frames: &[u16], left: bool) -> i32 {
         if self.view.1 - self.view.0 == crate::WIDTH as i32 {
             return self.camera.0 + offset;
         }
-        let mut first = 0;
-        let mut last = 0;
-        for piece in frames
-            .iter()
-            .filter_map(|id| self.mappings.get(id))
-            .flat_map(|m| &m.pieces)
-        {
-            let (lo, hi) = (piece.x, piece.x + piece.width as i32 * 8);
-            let (lo, hi) = if left { (-hi, -lo) } else { (lo, hi) };
-            first = first.min(lo);
-            last = last.max(hi);
-        }
+        let (first, last) = crate::combat::sprite_span(self.mappings, frames, left);
         self.camera.0
             + if offset < 0 {
                 self.view.0 + offset.min(-last - 8)
