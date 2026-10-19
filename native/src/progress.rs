@@ -38,6 +38,13 @@ impl Progress {
     pub fn restore(&self, rom: &[u8]) -> Result<(Box<Game>, History), String> {
         self.state.as_ref().ok_or("No saved run")?.restore(rom)
     }
+    /// The saved substage and run, kept for restarting it when the history no
+    /// longer replays on this build.
+    pub fn saved_run(&self) -> Option<(crate::stage::StageId, u64, bool)> {
+        let state = self.state.as_ref()?;
+        let (id, practice) = state.run();
+        Some((state.stage(), id, practice))
+    }
     pub fn save(&mut self, state: SaveState, rom_crc: u32) {
         if let Some(path) = &self.path {
             if let Err(error) = state.write_path(path, rom_crc) {

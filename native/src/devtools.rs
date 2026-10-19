@@ -36,6 +36,16 @@ impl SaveState {
     pub fn frame_checksum(&self) -> u32 {
         self.checksum
     }
+    /// The recorded run identity (0 for legacy histories) and whether the
+    /// history marked it practice.
+    pub(crate) fn run(&self) -> (u64, bool) {
+        let events = self.history.iter().flat_map(|h| &h.events);
+        events.fold((0, false), |(id, practice), event| match *event {
+            Event::RunIdentity(run) => (run, practice),
+            Event::Practice => (id, true),
+            _ => (id, practice),
+        })
+    }
 }
 
 /// A substage the ROM defines, and how many parts it streams.

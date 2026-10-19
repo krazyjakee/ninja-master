@@ -155,8 +155,11 @@ Checkpoints are saved every five seconds of simulation, at mode transitions,
 and on normal application exit, in `continue.nms` beside your settings.
 Continue restores gameplay directly, including when the checkpoint was taken
 while paused or showing a round card. Completed or exhausted runs clear it.
-Continue is hidden when there is no compatible checkpoint; damaged or
-incompatible files produce a message without starting a game. It is separate
+Checkpoints replay your inputs, so a newer build can play them out
+differently; Continue then restarts the checkpoint's substage from its start
+with fresh score, lives and ammunition. Continue is hidden when there is no
+compatible checkpoint; damaged files produce a message without starting a
+game. It is separate
 from the original game-over continues and the eight manual save slots.
 
 ## Practice

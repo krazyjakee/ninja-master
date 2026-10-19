@@ -313,32 +313,13 @@ impl Modes {
                 self.quit = true;
             }
             Some(ModeChange::NewGame(front)) => match front.new_game() {
-                Ok(mut game) => {
+                Ok(game) => {
                     if let Err(error) = self.progress.clear() {
                         self.progress.status = format!("Cannot replace saved run: {error}");
                         self.replace(Box::new(crate::front_end::Title::menu(front)));
                         return;
                     }
-                    self.profile.begin(&mut game.run);
-                    let mut history = crate::devtools::replay::History {
-                        boot: false,
-                        stage: game.stage_id,
-                        effects: front.effects,
-                        events: Vec::new(),
-                    };
-                    history.events.push(crate::devtools::replay::Event::Session(
-                        front.options,
-                        front.high_score,
-                        front.demo_counter,
-                    ));
-                    history
-                        .events
-                        .push(crate::devtools::replay::Event::RunIdentity(game.run.id));
-                    self.profile.observe(&game.run);
-                    self.profile.flush();
-                    self.history = Some(history);
-                    self.replace(crate::round_screens::StageClear::round_card(Box::new(game)));
-                    self.checkpoint();
+                    self.start_run(&front, game, false);
                 }
                 Err(error) => {
                     self.progress.status = error;
@@ -368,9 +349,26 @@ impl Modes {
                     self.record(crate::devtools::replay::Event::Resume);
                 }
                 Err(error) => {
-                    self.progress.invalidate();
-                    self.progress.status = format!("Continue unavailable: {error}");
-                    self.replace(Box::new(crate::front_end::Title::menu(front)));
+                    // Histories replay only on the build that recorded them.
+                    // After a gameplay change, restart the saved substage as
+                    // a new run that keeps the old run's eligibility.
+                    let restart = self.progress.saved_run().and_then(|(stage, id, practice)| {
+                        let mut game = Game::load_stage(&front.rom, stage.with_part(0)).ok()?;
+                        front.prepare(&mut game);
+                        game.start_session(front.options);
+                        let practice = practice
+                            || id == 0
+                            || self.profile.data.tainted.contains(&id)
+                            || game.run.practice;
+                        Some((game, practice))
+                    });
+                    if let Some((game, practice)) = restart {
+                        self.start_run(&front, game, practice);
+                    } else {
+                        self.progress.invalidate();
+                        self.progress.status = format!("Continue unavailable: {error}");
+                        self.replace(Box::new(crate::front_end::Title::menu(front)));
+                    }
                 }
             },
         }
@@ -556,6 +554,30 @@ impl Modes {
         self.record(crate::devtools::replay::Event::Communication(value));
         self.current.sound_communication(value);
     }
+    /// Begin a profile run with a session the replay rebuilds from `game`'s
+    /// stage, then show its round card and save it for CONTINUE.
+    fn start_run(&mut self, front: &crate::front_end::Front, mut game: Game, practice: bool) {
+        use crate::devtools::replay::{Event, History};
+        self.profile.begin(&mut game.run);
+        let mut events = vec![
+            Event::Session(front.options, front.high_score, front.demo_counter),
+            Event::RunIdentity(game.run.id),
+        ];
+        if practice {
+            self.profile.taint(&mut game.run);
+            events.push(Event::Practice);
+        }
+        self.profile.observe(&game.run);
+        self.profile.flush();
+        self.history = Some(History {
+            boot: false,
+            stage: game.stage_id,
+            effects: front.effects,
+            events,
+        });
+        self.replace(crate::round_screens::StageClear::round_card(Box::new(game)));
+        self.checkpoint();
+    }
     pub(crate) fn record(&mut self, event: crate::devtools::replay::Event) {
         if let Some(history) = &mut self.history {
             history.events.push(event);
@@ -597,3 +619,6 @@ pub fn any_button(input: Input) -> bool {
     .iter()
     .any(|&button| input.pressed(button))
 }
+
+#[cfg(test)]
+mod tests;

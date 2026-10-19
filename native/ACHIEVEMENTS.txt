@@ -24,7 +24,9 @@ shurikens. Score challenges exclude Easy; True Ninja Master requires Expert thro
 continues; Art of Self-Preservation requires Expert. Controls, remapping,
 widescreen, display effects, volume and ordinary pause do not affect eligibility.
 
-Automatic main-menu CONTINUE retains the run identity and eligibility. Original
+Automatic main-menu CONTINUE retains the run identity and eligibility. When a
+build change stops the checkpoint replaying, CONTINUE restarts its substage as
+a new run identity with the old run's eligibility and reset run progress. Original
 game-over continues stay in the same run and count as continues. Deaths and
 continues do not reset a round's bonus flags or its elapsed time.
 
