@@ -52,6 +52,11 @@ fn relative(name: &str) -> Result<&Path, String> {
     Ok(path)
 }
 
+/// Check a manifest's file name without opening the pack.
+pub fn check_name(name: &str) -> Result<(), String> {
+    relative(name).map(|_| ())
+}
+
 pub fn read_bounded(reader: impl Read, limit: usize) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     reader

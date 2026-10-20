@@ -33,8 +33,9 @@ ignored. \"volume\" scales an entry (1.0 by default, up to 4.0). \"title\" is
 only a note.
 
 Select the pack in the F1 panel's Audio packs tab; Reload audio picks up
-edits. The originals are rendered at the game's level, so files normalized
-like them keep the original balance between music and effects.
+edits. Each file plays at the loudness of the original it replaces, so a
+loud mastered track does not drown the effects; \"volume\" adjusts from
+there. Voices always play once.
 ";
 
 /// Export into a fresh directory: existing files are never overwritten.

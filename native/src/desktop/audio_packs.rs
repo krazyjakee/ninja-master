@@ -1,11 +1,40 @@
 //! Audio pack selection and template export in the companion panel.
 use super::packs::{Labels, PackPicker};
 use imgui::Ui;
-use ninja_master_native::audio_pack::KIND;
+use ninja_master_native::audio_pack::{AudioPack, KIND};
 use std::{
     path::PathBuf,
+    thread::JoinHandle,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+/// A pack loading beside the game: matching its loudness renders the
+/// originals it replaces, which takes a few seconds.
+pub(super) struct Loading {
+    pub path: PathBuf,
+    handle: JoinHandle<Result<AudioPack, String>>,
+}
+
+impl Loading {
+    /// Without a ROM the pack loads unmatched (for a mode without sound).
+    pub fn start(path: PathBuf, rom: Option<Vec<u8>>) -> Self {
+        let file = path.clone();
+        Self {
+            path,
+            handle: std::thread::spawn(move || AudioPack::load(&file, rom.as_deref())),
+        }
+    }
+    pub fn finished(&self) -> bool {
+        self.handle.is_finished()
+    }
+    pub fn join(self) -> (PathBuf, Result<AudioPack, String>) {
+        let result = self
+            .handle
+            .join()
+            .unwrap_or_else(|_| Err("loading stopped unexpectedly".into()));
+        (self.path, result)
+    }
+}
 
 pub(super) enum Action {
     Load(PathBuf),

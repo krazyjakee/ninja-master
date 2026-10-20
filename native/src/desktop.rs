@@ -124,17 +124,12 @@ pub(super) fn run(
     }
     frame.smooth_wave_effects = settings.smooth_wave_effects;
     let mut audio_status = String::new();
-    if let Some(player) = soundtrack.as_mut()
-        && !settings.audio_pack.is_empty()
-    {
+    // The original sound plays until the pack has loaded.
+    let mut audio_loading = None;
+    if soundtrack.is_some() && !settings.audio_pack.is_empty() {
         let path = resolve_selection(&audio_pack::library_directory(), &settings.audio_pack);
-        match AudioPack::load(&path) {
-            Ok(pack) => {
-                audio_status = pack_notes(&pack);
-                player.set_pack(Some(Arc::new(pack)));
-            }
-            Err(error) => audio_status = format!("Could not load audio: {error}"),
-        }
+        audio_status = "Loading the audio pack...".into();
+        audio_loading = Some(audio_packs::Loading::start(path, Some(rom.to_vec())));
     }
     // Rendering a template takes a minute, so it runs beside the game.
     let mut audio_export: Option<std::thread::JoinHandle<Result<PathBuf, String>>> = None;
@@ -263,11 +258,7 @@ pub(super) fn run(
         ""
     });
     panel.gallery.set_art_pack(frame.art_pack());
-    panel.set_audio_selection(if soundtrack.as_ref().is_some_and(|s| s.pack().is_some()) {
-        &settings.audio_pack
-    } else {
-        ""
-    });
+    panel.set_audio_selection(&settings.audio_pack);
     let mut show_panel = options.devtools;
     let mut performance = performance::Performance::default();
     let mut screenshots = capture::Capture::default();
@@ -980,6 +971,33 @@ pub(super) fn run(
                     .iter()
                     .find(|pad| settings.controller.is_empty() || pad.name() == settings.controller)
                     .map_or([0; 2], |pad| [pad.axis(Axis::LeftX), pad.axis(Axis::LeftY)]);
+                if audio_loading
+                    .as_ref()
+                    .is_some_and(audio_packs::Loading::finished)
+                {
+                    let (path, result) = audio_loading.take().unwrap().join();
+                    match result {
+                        Ok(pack) => {
+                            audio_status = format!("Loaded {}. {}", pack.name, pack_notes(&pack));
+                            if soundtrack.is_none() {
+                                audio_status += "Sound is off in this mode; play mode uses it.";
+                            }
+                            settings.audio_pack =
+                                selection_value(&audio_pack::library_directory(), &path);
+                            if let Some(player) = soundtrack.as_mut() {
+                                player.set_pack(Some(Arc::new(pack)));
+                            }
+                        }
+                        Err(error) => audio_status = format!("Could not load pack: {error}"),
+                    }
+                    panel.set_audio_selection(
+                        if soundtrack.as_ref().is_some_and(|s| s.pack().is_some()) {
+                            &settings.audio_pack
+                        } else {
+                            ""
+                        },
+                    );
+                }
                 if audio_export
                     .as_ref()
                     .is_some_and(std::thread::JoinHandle::is_finished)
@@ -1106,22 +1124,13 @@ pub(super) fn run(
                 }
                 if let Some(action) = actions.audio {
                     match action {
-                        audio_packs::Action::Load(path) => match AudioPack::load(&path) {
-                            Ok(pack) => {
-                                audio_status =
-                                    format!("Loaded {}. {}", pack.name, pack_notes(&pack));
-                                if soundtrack.is_none() {
-                                    audio_status += "Sound is off in this mode; play mode uses it.";
-                                }
-                                settings.audio_pack =
-                                    selection_value(&audio_pack::library_directory(), &path);
-                                if let Some(player) = soundtrack.as_mut() {
-                                    player.set_pack(Some(Arc::new(pack)));
-                                }
-                            }
-                            Err(error) => audio_status = format!("Could not load pack: {error}"),
-                        },
+                        audio_packs::Action::Load(path) => {
+                            audio_status = "Loading the audio pack...".into();
+                            let rom = soundtrack.is_some().then(|| rom.to_vec());
+                            audio_loading = Some(audio_packs::Loading::start(path, rom));
+                        }
                         audio_packs::Action::Original => {
+                            audio_loading = None;
                             settings.audio_pack.clear();
                             audio_status = "Using the original soundtrack.".into();
                             if let Some(player) = soundtrack.as_mut() {

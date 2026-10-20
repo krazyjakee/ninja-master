@@ -191,27 +191,29 @@ fn packs_load_from_folders_and_validate_on_discovery() {
     let manifest = r#"{"version": 1, "name": "Test pack",
         "music": {"93": {"file": "music/forest.ogg", "loop_start": 312800, "loop_end": 3384800}},
         "effects": {"A5": {"file": "hit.wav", "volume": 0.5, "title": "WARNING"},
-                    "A6": {"file": "junk.wav"}}}"#;
+                    "A6": {"file": "junk.wav"}, "A7": {"file": "effects/deleted.wav"}},
+        "voices": {"DB": {"file": "hit.wav", "loop_start": 0, "loop_end": 80},
+                   "DC": {"file": "voices/deleted.wav"}}}"#;
     std::fs::write(dir.join(MANIFEST), manifest).unwrap();
     let entry = PackEntry::read(&dir, &KIND).unwrap();
     assert_eq!(entry.name, "Test pack");
-    let pack = AudioPack::load(&dir).unwrap();
-    assert_eq!(
-        Section::ALL.map(|s| pack.count(s)),
-        [1, 1, 0],
-        "music and effects"
-    );
+    let pack = AudioPack::load(&dir, None).unwrap();
+    assert_eq!(Section::ALL.map(|s| pack.count(s)), [1, 1, 1]);
     assert_eq!(pack.clip(0xa5).unwrap().volume, 0.5);
-    // Stale loop points loop the whole file; an unreadable file keeps the
-    // original sound. Both load and say so.
+    // Stale loop points loop the whole file and an unreadable file keeps
+    // the original sound, with a note each; files the pack leaves out
+    // simply keep the original sound.
     assert_eq!(pack.clip(0x93).unwrap().loop_start, Some(0));
-    assert!(pack.clip(0xa6).is_none());
+    assert!(pack.clip(0xa6).is_none() && pack.clip(0xa7).is_none());
+    assert!(pack.clip(0xdc).is_none());
     assert_eq!(pack.notes.len(), 2, "{:?}", pack.notes);
+    // Voices play once, as the driver plays its samples.
+    let voice = pack.clip(0xdb).unwrap();
+    assert_eq!((voice.loop_start, voice.loop_end), (None, 100));
 
     for bad in [
         r#"{"version": 2, "name": ""}"#,
         r#"{"version": 1, "name": "", "music": {"A5": {"file": "hit.wav"}}}"#,
-        r#"{"version": 1, "name": "", "voices": {"D9": {"file": "missing.wav"}}}"#,
         r#"{"version": 1, "name": "", "voices": {"D9": {"file": "../hit.wav"}}}"#,
         r#"{"version": 1, "name": "", "effects": {"A5": {"file": "hit.wav", "volume": 9}}}"#,
         r#"{"version": 1, "name": "", "effects": {"A5": {"file": "hit.wav", "speed": 2}}}"#,
@@ -220,6 +222,65 @@ fn packs_load_from_folders_and_validate_on_discovery() {
         assert!(PackEntry::read(&dir, &KIND).is_err(), "{bad}");
     }
     fs_remove(&dir).unwrap();
+}
+
+#[test]
+fn levels_ignore_silence() {
+    let tone = |level: f32, frames: usize| std::iter::repeat_n([level, -level], frames);
+    let rms = level::gated_rms(tone(0.25, 4_800), 48_000);
+    assert!((rms - 0.25).abs() < 1e-9);
+    // A silent tail and a quiet intro do not lower the level.
+    let padded = tone(0.0, 48_000)
+        .chain(tone(0.25, 4_800))
+        .chain(tone(0.0001, 9_600));
+    assert!((level::gated_rms(padded, 48_000) - 0.25).abs() < 1e-9);
+    assert_eq!(level::gated_rms(tone(0.0, 4_800), 48_000), 0.0);
+}
+
+#[test]
+#[ignore = "requires a user-supplied cartridge"]
+fn replacements_play_at_their_originals_loudness() {
+    let dir = std::env::var_os("NINJA_MASTER_TEST_ROMS")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../rom"));
+    let rom =
+        crate::rom::regions::prepare(std::fs::read(dir.join("shinobi3_us.bin")).unwrap()).unwrap();
+    // A loud mastered track, a quiet effect, a loud voice, and an effect
+    // too faint to raise fully.
+    let tone = |level: i16| {
+        let pcm: Vec<i16> = (0..48_000 * 30)
+            .flat_map(|i| {
+                let s = if i % 100 < 50 { level } else { -level };
+                [s, s]
+            })
+            .collect();
+        let mut looped = entry("a.wav");
+        looped.looping = true;
+        Clip::load(wav_bytes(&pcm, 48_000).unwrap(), &looped).unwrap()
+    };
+    let mut clips = vec![
+        (0x93, tone(32_000)),
+        (0xa5, tone(1_500)),
+        (0xdb, tone(30_000)),
+    ];
+    clips[0].1.volume = 0.5;
+    let mut faint = [(0xa5, tone(150))];
+    level::match_levels(&rom, &mut clips);
+    level::match_levels(&rom, &mut faint);
+    assert_eq!(faint[0].1.volume, 4.0, "boosts stop at +12 dB");
+    for (command, clip) in &clips {
+        let heard = clip.level() * f64::from(clip.volume);
+        let original = crate::sound::reference_level(&rom, *command).unwrap();
+        let wanted = if *command == 0x93 {
+            original * 0.5
+        } else {
+            original
+        };
+        assert!(
+            (heard / wanted - 1.0).abs() < 0.02,
+            "${command:02x}: {heard} vs {wanted}"
+        );
+    }
 }
 
 fn fs_remove(path: &Path) -> std::io::Result<()> {
@@ -238,9 +299,8 @@ fn templates_round_trip_as_packs_with_every_sound() {
     let _ = fs_remove(&path);
     export_template(&rom, &path).unwrap();
     assert!(export_template(&rom, &path).is_err(), "never overwrites");
-    let pack = AudioPack::load(&path).unwrap();
-    let counts = Section::ALL.map(|s| pack.count(s));
-    eprintln!("{counts:?}");
+    let pack = AudioPack::load(&path, Some(&rom)).unwrap();
+    assert_eq!(Section::ALL.map(|s| pack.count(s)), [28, 59, 19]);
     let manifest: Manifest =
         serde_json::from_slice(&std::fs::read(path.join(MANIFEST)).unwrap()).unwrap();
     let forest = &manifest.music["93"];
@@ -252,5 +312,11 @@ fn templates_round_trip_as_packs_with_every_sound() {
         pack.clip(0x91).unwrap().loop_start.is_none(),
         "ROUND CLEAR plays once"
     );
+    assert!(manifest.voices.values().all(|voice| !voice.looping));
+    // Renders of the originals already match them.
+    for command in [0x93, 0x91, 0xa5, 0xdb] {
+        let volume = pack.clip(command).unwrap().volume;
+        assert!((volume - 1.0).abs() < 0.02, "${command:02x}: {volume}");
+    }
     fs_remove(&path).unwrap();
 }

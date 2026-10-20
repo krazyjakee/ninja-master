@@ -145,8 +145,9 @@ pub fn render_template(rom: &[u8], command: u8) -> Result<Template> {
             tail = Some(TEMPLATE_TAIL_TICKS);
             continue;
         }
+        // A voice is one sample with no sequence: it plays once.
         let globals = &player.globals;
-        if globals.tempo != 0 && globals.tempo_clock == globals.tempo {
+        if command >= 0xd9 || globals.tempo != 0 && globals.tempo_clock == globals.tempo {
             continue;
         }
         // The state after an output tick decides the frames from its start.
@@ -201,6 +202,36 @@ fn lcm(a: u32, b: u32) -> u32 {
         a
     };
     (a / gcd(a, b)).saturating_mul(b)
+}
+
+/// An original's loudness, as audio packs measure their replacements: the
+/// gated RMS of a music track's first seconds, or of a whole effect or
+/// voice, as a fraction of full scale.
+pub fn reference_level(rom: &[u8], command: u8) -> Result<f64> {
+    use crate::audio_pack::{LEVEL_SECONDS, gated_rms};
+    const RATE: u32 = 48_000;
+    let mut player = SoundPlayer::new(rom, RATE)?;
+    player.play_command(command);
+    let mut pcm = vec![0; RATE as usize / 60 * 2];
+    let mut frames = Vec::new();
+    // The release after the sequences end counts, as in template renders.
+    let mut tail = TEMPLATE_TAIL_TICKS;
+    for _ in 0..LEVEL_SECONDS * 60 {
+        player.render(&mut pcm)?;
+        frames.extend(
+            pcm.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|f| f.map(|s| f32::from(s) / 32_768.0)),
+        );
+        if !player.sounding() {
+            tail -= 1;
+            if tail == 0 {
+                break;
+            }
+        }
+    }
+    Ok(gated_rms(frames.into_iter(), RATE))
 }
 
 /// A 16-bit stereo PCM WAV file holding interleaved `pcm` at `sample_rate`.

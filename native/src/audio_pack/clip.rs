@@ -6,6 +6,7 @@ use std::{io::Cursor, sync::Arc};
 /// Vorbis files up to this long are decoded on load; longer ones stream.
 const DECODE_SECONDS: u64 = 15;
 
+#[derive(Clone)]
 pub struct Clip {
     pub(super) data: Data,
     pub rate: u32,
@@ -23,6 +24,7 @@ pub struct Clip {
 /// Loop start and end frames a file carries itself.
 type FileLoop = Option<(u64, u64)>;
 
+#[derive(Clone)]
 pub(super) enum Data {
     /// Interleaved samples, `channels` per frame.
     Pcm(Arc<[i16]>),

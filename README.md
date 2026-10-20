@@ -264,7 +264,11 @@ themselves, so a file you swap in for a looping track loops whole; give it
 its own loop points (a WAV `smpl` loop or Ogg `LOOPSTART`/`LOOPLENGTH` tags),
 or set `loop_start`/`loop_end` in its sample frames, to loop part of it.
 Loop points that do not fit a file are ignored, and a file that cannot be
-read keeps the original sound; the tab lists both. Replacement music follows
+read keeps the original sound; the tab lists both. Entries whose files the
+pack leaves out keep the original sound. Every file plays at the loudness
+of the original it replaces (measured from your ROM while the pack loads in
+the background), and `volume` adjusts from there; voices always play once.
+Replacement music follows
 pause dimming and fade-outs, and replacement effects keep the original
 priority and interruption rules. The original sequences keep running silently,
 so timing, saves and replays are unchanged.

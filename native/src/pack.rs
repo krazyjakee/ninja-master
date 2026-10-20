@@ -3,7 +3,7 @@
 mod library;
 mod source;
 pub use library::{Library, PackEntry, library_directory, resolve_selection, selection_value};
-pub use source::{Member, Source, read_bounded};
+pub use source::{Member, Source, check_name, read_bounded};
 
 /// What distinguishes one pack type's files and library folder.
 #[derive(Debug)]

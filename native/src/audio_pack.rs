@@ -3,7 +3,7 @@
 //! the music, effects and voices; everything else keeps the FM/PSG sound.
 //! Replacement only changes what is heard: the original sequences still run
 //! silently, keeping their `$E2` markers, fades and timing deterministic.
-use crate::pack::{Kind, Source};
+use crate::pack::{Kind, Source, check_name};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -12,10 +12,12 @@ use std::{
 };
 
 mod clip;
+mod level;
 mod template;
 mod voice;
 pub use crate::pack::{Library, PackEntry, resolve_selection, selection_value};
 pub use clip::Clip;
+pub(crate) use level::{SECONDS as LEVEL_SECONDS, gated_rms};
 pub use template::export_template;
 pub(crate) use voice::Voice;
 
@@ -71,7 +73,8 @@ pub struct Manifest {
     /// `9D`..`D8`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub effects: BTreeMap<String, Entry>,
-    /// Sampled voices and drums started by the game, `D9`..`FB`.
+    /// Sampled voices and drums started by the game, `D9`..`FB`; these
+    /// play once, as the driver plays them.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub voices: BTreeMap<String, Entry>,
 }
@@ -134,7 +137,8 @@ fn command(section: Section, key: &str) -> Result<u8, String> {
         })
 }
 
-/// Discovery validates keys and references without decoding audio.
+/// Discovery validates keys and file names without reading audio. Listed
+/// files may be missing: those commands keep the original sound.
 fn manifest(source: &mut Source) -> Result<Manifest, String> {
     let manifest: Manifest = serde_json::from_slice(&source.manifest_bytes()?)
         .map_err(|e| format!("{MANIFEST}: {e}"))?;
@@ -150,7 +154,7 @@ fn manifest(source: &mut Source) -> Result<Manifest, String> {
     for section in Section::ALL {
         for (key, entry) in manifest.section(section) {
             command(section, key)?;
-            source.location(&entry.file)?;
+            check_name(&entry.file)?;
             if !(0.0..=4.0).contains(&entry.volume) {
                 return Err(format!("{key}: volume must be 0..4"));
             }
@@ -167,30 +171,36 @@ pub struct AudioPack {
 }
 
 impl AudioPack {
-    /// A pack directory, audio-pack.json, or a ZIP with one root/wrapped manifest.
-    pub fn load(path: &Path) -> Result<Self, String> {
+    /// A pack directory, audio-pack.json, or a ZIP with one root/wrapped
+    /// manifest. With the ROM, every file plays at its original's loudness
+    /// (which takes a few seconds of rendering).
+    pub fn load(path: &Path, rom: Option<&[u8]>) -> Result<Self, String> {
         let mut source = Source::open(path, &KIND)?;
         let manifest = manifest(&mut source)?;
-        let mut clips = HashMap::new();
+        let mut clips = Vec::new();
         let mut notes = Vec::new();
         let mut total = 0;
         for section in Section::ALL {
             for (key, entry) in manifest.section(section) {
-                // One unreadable file keeps its original sound, not the
-                // pack from loading.
-                let clip = source.read(&entry.file, MAX_FILE_BYTES).and_then(|bytes| {
-                    total += bytes.len();
-                    if total > MAX_PACK_BYTES {
-                        return Err("audio pack exceeds 1 GiB".into());
-                    }
-                    Clip::load(bytes, entry)
-                });
-                match clip {
-                    Ok(clip) => {
+                // A pack need not include every file it lists: missing ones
+                // keep the original sound. Unreadable ones do too, noted.
+                if source.location(&entry.file).is_err() {
+                    continue;
+                }
+                let bytes = source.read(&entry.file, MAX_FILE_BYTES)?;
+                total += bytes.len();
+                if total > MAX_PACK_BYTES {
+                    return Err("audio pack exceeds 1 GiB".into());
+                }
+                match Clip::load(bytes, entry) {
+                    Ok(mut clip) => {
                         notes.extend(clip.notes.iter().map(|n| format!("{}: {n}", entry.file)));
-                        clips.insert(command(section, key)?, Arc::new(clip));
+                        // The driver plays a voice sample once.
+                        if !level::loops(section) {
+                            (clip.loop_start, clip.loop_end) = (None, clip.frames);
+                        }
+                        clips.push((command(section, key)?, clip));
                     }
-                    Err(error) if total > MAX_PACK_BYTES => return Err(error),
                     Err(error) => notes.push(format!(
                         "{}: {error}; keeping the original sound",
                         entry.file
@@ -198,9 +208,15 @@ impl AudioPack {
                 }
             }
         }
+        if let Some(rom) = rom {
+            level::match_levels(rom, &mut clips);
+        }
         Ok(Self {
             name: manifest.name,
-            clips,
+            clips: clips
+                .into_iter()
+                .map(|(command, clip)| (command, Arc::new(clip)))
+                .collect(),
             notes,
         })
     }
