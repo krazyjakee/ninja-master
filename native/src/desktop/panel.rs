@@ -1,4 +1,4 @@
-//! The F1 companion panel: controls, audio, saves, gallery, stages and tools.
+//! The F1 companion panel: controls, audio, packs, saves, gallery, stages and tools.
 
 use super::gallery::Gallery;
 use crate::Scene;
@@ -14,6 +14,7 @@ use ninja_master_native::{
 #[derive(Default)]
 pub(super) struct Panel {
     art: super::art::ArtPanel,
+    audio: super::audio_packs::AudioPanel,
     /// Index into `DevTools::stages`.
     stage: usize,
     part: u8,
@@ -26,10 +27,16 @@ pub(super) struct Panel {
 
 impl Panel {
     pub(super) fn set_art_selection(&mut self, selection: &str) {
-        self.art.set_selection(selection);
+        self.art.packs.set_selection(selection);
     }
     pub(super) fn refresh_art_packs(&mut self) {
-        self.art.rescan();
+        self.art.packs.rescan();
+    }
+    pub(super) fn set_audio_selection(&mut self, selection: &str) {
+        self.audio.packs.set_selection(selection);
+    }
+    pub(super) fn refresh_audio_packs(&mut self) {
+        self.audio.packs.rescan();
     }
     pub(super) fn show(
         &mut self,
@@ -85,6 +92,14 @@ impl Panel {
                         tools.as_deref().map_or(&[], |t| t.stages.as_slice()),
                         info.art_name,
                         info.art_status,
+                    );
+                }
+                if let Some(_tab) = ui.tab_item("Audio packs") {
+                    actions.audio = self.audio.show(
+                        ui,
+                        info.audio_name,
+                        info.audio_status,
+                        info.audio_exporting,
                     );
                 }
                 match (scene, tools) {
@@ -408,6 +423,7 @@ impl Panel {
 #[derive(Default)]
 pub(super) struct Actions {
     pub art: Option<super::art::Action>,
+    pub audio: Option<super::audio_packs::Action>,
     pub scene_changed: bool,
     pub capture: Option<(Button, Device)>,
 }
@@ -415,6 +431,9 @@ pub(super) struct Actions {
 pub(super) struct PanelInfo<'a> {
     pub art_name: &'a str,
     pub art_status: &'a str,
+    pub audio_name: &'a str,
+    pub audio_status: &'a str,
+    pub audio_exporting: bool,
     pub ticks: u64,
     pub controllers: &'a [String],
     pub capture: Option<(Button, Device)>,

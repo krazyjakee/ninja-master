@@ -1,13 +1,10 @@
 //! Pack creation and selection in the companion panel.
+use super::packs::{Labels, PackPicker};
 use imgui::Ui;
-use ninja_master_native::{
-    art_pack::{Library, PackEntry, library_directory, resolve_selection},
-    devtools::Substage,
-    stage::StageId,
-};
+use ninja_master_native::{art_pack::KIND, devtools::Substage, stage::StageId};
 use std::{
     path::PathBuf,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 pub(super) enum Action {
@@ -21,9 +18,7 @@ pub(super) enum Action {
 }
 
 pub(super) struct ArtPanel {
-    library: Library,
-    selection: Option<PackEntry>,
-    last_refresh: Instant,
+    pub packs: PackPicker,
     export_name: String,
     export_error: String,
     scale: usize,
@@ -38,9 +33,7 @@ impl Default for ArtPanel {
             .unwrap_or_default()
             .as_secs();
         Self {
-            library: Library::new(library_directory()),
-            selection: None,
-            last_refresh: Instant::now(),
+            packs: PackPicker::new(&KIND),
             export_name: format!("template-{stamp}"),
             export_error: String::new(),
             scale: 2,
@@ -51,22 +44,6 @@ impl Default for ArtPanel {
 }
 
 impl ArtPanel {
-    pub fn set_selection(&mut self, value: &str) {
-        self.selection = if value.is_empty() {
-            None
-        } else {
-            PackEntry::read(&resolve_selection(&self.library.root, value)).ok()
-        };
-    }
-
-    pub fn refresh(&mut self) {
-        self.library.refresh();
-        self.last_refresh = Instant::now();
-    }
-    pub fn rescan(&mut self) {
-        self.library.rescan();
-        self.last_refresh = Instant::now();
-    }
     pub fn show(
         &mut self,
         ui: &Ui,
@@ -76,56 +53,14 @@ impl ArtPanel {
     ) -> Option<Action> {
         let mut action = None;
         ui.text(format!("Active artwork: {current}"));
-        if self.last_refresh.elapsed() >= Duration::from_secs(2) {
-            self.refresh();
-        }
-        let mut folder = self.library.root.to_string_lossy().into_owned();
-        ui.input_text("Pack folder", &mut folder)
-            .read_only(true)
-            .build();
-        ui.text_wrapped("Drop ZIP files or pack folders here. New packs appear automatically.");
-        let mut choices = vec![("Original artwork".to_owned(), None)];
-        choices.extend(
-            self.library
-                .packs
-                .iter()
-                .map(|pack| (pack.label(), Some(pack.path.clone()))),
-        );
-        if let Some(pack) = &self.selection
-            && !choices
-                .iter()
-                .any(|(_, path)| path.as_ref() == Some(&pack.path))
-        {
-            choices.push((pack.label(), Some(pack.path.clone())));
-        }
-        let active = self.selection.as_ref().map(|pack| &pack.path);
-        let mut selected = choices
-            .iter()
-            .position(|(_, path)| path.as_ref() == active)
-            .unwrap_or(0);
-        let names: Vec<_> = choices.iter().map(|(name, _)| name.as_str()).collect();
-        if ui.combo_simple_string("Artwork", &mut selected, &names) {
-            action = Some(
-                choices[selected]
-                    .1
-                    .clone()
-                    .map_or(Action::Original, Action::Load),
-            );
-        }
-        if ui.button("Refresh list") {
-            self.rescan();
-        }
-        ui.same_line();
-        if ui.button("Reload artwork") {
-            action = Some(
-                self.selection
-                    .as_ref()
-                    .map_or(Action::Original, |pack| Action::Load(pack.path.clone())),
-            );
-        }
-        ui.text_wrapped("Edit folder packs and reload to see changes. Missing artwork uses the original graphics.");
-        for error in &self.library.errors {
-            ui.text_wrapped(error);
+        let labels = Labels {
+            combo: "Artwork",
+            original: "Original artwork",
+            reload: "Reload artwork",
+            missing: "Edit folder packs and reload to see changes. Missing artwork uses the original graphics.",
+        };
+        if let Some(choice) = self.packs.show(ui, &labels) {
+            action = Some(choice.map_or(Action::Original, Action::Load));
         }
         ui.separator();
         ui.text("Create a pack: easy mode");
@@ -151,7 +86,7 @@ impl ArtPanel {
                 "Exports into the pack folder. Existing artwork is never overwritten.",
             );
             if ui.button("Export easy mode template") {
-                match self.library.template_path(&self.export_name) {
+                match self.packs.library.template_path(&self.export_name) {
                     Ok(folder) => {
                         self.export_error.clear();
                         action = Some(Action::Export {

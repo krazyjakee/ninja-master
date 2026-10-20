@@ -101,6 +101,11 @@ pub(super) struct Track {
     /// Set when `$E3`/`$F2` stops the track; SFX stops release the driver priority.
     pub(super) stopped: bool,
     pub(super) dac: Option<Dac>,
+    /// Native: the effect or voice command that started this track.
+    pub(super) command: u8,
+    /// Native: an audio pack plays this effect instead; the track still runs
+    /// for priority and channel ownership but is neither heard nor masks music.
+    pub(super) muted: bool,
 }
 impl Track {
     pub(super) fn new(
@@ -154,7 +159,26 @@ impl Track {
             register_pointer: [0; 4],
             stopped: false,
             dac: None,
+            command: 0,
+            muted: false,
         }
+    }
+    /// The sequence position and counters, not the sound they produce: equal
+    /// states replay the same events from then on. Volume is left out: some
+    /// sequences lower a channel on every pass (INNER DARKSIDE), so their
+    /// state never repeats although the music does.
+    pub(super) fn hash_sequence(&self, state: &mut impl std::hash::Hasher) {
+        use std::hash::Hash;
+        (
+            self.active,
+            self.pc,
+            self.remaining,
+            self.duration,
+            self.loops,
+        )
+            .hash(state);
+        (&self.calls, self.transpose, self.detune).hash(state);
+        (self.multiplier, self.dac.as_ref().is_some_and(Dac::playing)).hash(state);
     }
     pub(super) fn slot(&self) -> u8 {
         if self.hardware == 0xe0 {

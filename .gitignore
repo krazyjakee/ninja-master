@@ -21,6 +21,7 @@ out/
 target/
 native/target/
 art-packs/
+audio-packs/
 saves/
 screenshots/
 *.nms

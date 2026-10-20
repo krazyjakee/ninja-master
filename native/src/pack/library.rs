@@ -1,6 +1,6 @@
 //! A fixed drop-in folder containing pack directories and ZIP files.
 use super::{
-    MANIFEST,
+    Kind,
     source::{Source, is_zip},
 };
 use std::{
@@ -9,11 +9,9 @@ use std::{
     time::SystemTime,
 };
 
-/// Override the normal portable/source pack folder.
-pub const LIBRARY_ENV: &str = "NINJA_MASTER_ART_PACKS";
-
-pub fn library_directory() -> PathBuf {
-    if let Some(path) = std::env::var_os(LIBRARY_ENV).filter(|p| !p.is_empty()) {
+/// `kind.env` overrides the normal portable/source pack folder.
+pub fn library_directory(kind: &Kind) -> PathBuf {
+    if let Some(path) = std::env::var_os(kind.env).filter(|p| !p.is_empty()) {
         let path = PathBuf::from(path);
         return if path.is_absolute() {
             path
@@ -24,9 +22,9 @@ pub fn library_directory() -> PathBuf {
     let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("art-packs");
+        .join(kind.folder);
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ninja-master-native"));
-    directory_for(&exe, &checkout)
+    directory_for(&exe, &checkout, kind.folder)
 }
 
 /// New selections use library-relative names; existing absolute paths still work.
@@ -52,14 +50,14 @@ pub fn selection_value(root: &Path, path: &Path) -> String {
         .into_owned()
 }
 
-fn directory_for(exe: &Path, checkout: &Path) -> PathBuf {
+fn directory_for(exe: &Path, checkout: &Path, folder: &str) -> PathBuf {
     let dir = exe.parent().unwrap_or(Path::new("."));
     let dir = if dir.file_name().is_some_and(|n| n == "MacOS") {
         dir.ancestors().nth(3).unwrap_or(dir)
     } else {
         dir
     };
-    let portable = dir.join("art-packs");
+    let portable = dir.join(folder);
     if portable.is_dir() || dir.join("release.json").is_file() || !checkout.is_dir() {
         portable
     } else {
@@ -71,20 +69,21 @@ fn directory_for(exe: &Path, checkout: &Path) -> PathBuf {
 pub struct PackEntry {
     pub name: String,
     pub path: PathBuf,
+    kind: &'static Kind,
 }
 
 impl PackEntry {
-    pub fn read(path: &Path) -> Result<Self, String> {
-        let manifest = Source::open(path)?.manifest()?;
-        let name = if manifest.name.trim().is_empty() {
+    pub fn read(path: &Path, kind: &'static Kind) -> Result<Self, String> {
+        let name = (kind.name)(&mut Source::open(path, kind)?)?;
+        let name = if name.trim().is_empty() {
             path.file_stem()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned()
         } else {
-            manifest.name
+            name
         };
-        let path = if !path.is_dir() && path.file_name().is_some_and(|n| n == MANIFEST) {
+        let path = if !path.is_dir() && path.file_name().is_some_and(|n| n == kind.manifest) {
             path.parent().unwrap_or(path)
         } else {
             path
@@ -92,6 +91,7 @@ impl PackEntry {
         Ok(Self {
             name,
             path: fs::canonicalize(path).map_err(|e| e.to_string())?,
+            kind,
         })
     }
 
@@ -105,7 +105,10 @@ impl PackEntry {
     }
 
     pub fn matches(&self, selected: &Path) -> bool {
-        let path = if selected.file_name().is_some_and(|n| n == MANIFEST) {
+        let path = if selected
+            .file_name()
+            .is_some_and(|n| n == self.kind.manifest)
+        {
             selected.parent().unwrap_or(selected)
         } else {
             selected
@@ -125,6 +128,7 @@ pub struct Library {
     pub root: PathBuf,
     pub packs: Vec<PackEntry>,
     pub errors: Vec<String>,
+    kind: &'static Kind,
     signature: Option<Vec<Signature>>,
 }
 
@@ -133,11 +137,12 @@ impl Library {
         self.signature = None;
         self.refresh();
     }
-    pub fn new(root: PathBuf) -> Self {
+    pub fn new(root: PathBuf, kind: &'static Kind) -> Self {
         let mut library = Self {
             root,
             packs: Vec::new(),
             errors: Vec::new(),
+            kind,
             signature: None,
         };
         library.refresh();
@@ -151,8 +156,8 @@ impl Library {
             let mut signature = Vec::new();
             for entry in fs::read_dir(&self.root).map_err(|e| e.to_string())? {
                 let path = entry.map_err(|e| e.to_string())?.path();
-                let source = if path.is_dir() && path.join(MANIFEST).is_file() {
-                    path.join(MANIFEST)
+                let source = if path.is_dir() && path.join(self.kind.manifest).is_file() {
+                    path.join(self.kind.manifest)
                 } else if path.is_file() && is_zip(&path) {
                     path.clone()
                 } else {
@@ -182,7 +187,7 @@ impl Library {
         self.packs.clear();
         self.errors.clear();
         for candidate in &signature {
-            match PackEntry::read(&candidate.path) {
+            match PackEntry::read(&candidate.path, self.kind) {
                 Ok(pack) => self.packs.push(pack),
                 Err(error) => self.errors.push(format!(
                     "{}: {error}",
@@ -211,7 +216,10 @@ impl Library {
             || path.components().count() != 1
             || !matches!(path.components().next(), Some(Component::Normal(_)))
         {
-            return Err("Choose a folder name inside the art-packs folder.".into());
+            return Err(format!(
+                "Choose a folder name inside the {} folder.",
+                self.kind.folder
+            ));
         }
         Ok(self.root.join(path))
     }

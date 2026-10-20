@@ -4,10 +4,12 @@
 //! integrated exactly over each FM sample, and the mix is low-passed and resampled to the
 //! host rate. It is not a cycle-accurate chip emulator.
 use crate::assets::SoundAssets;
+use crate::audio_pack::{AudioPack, Voice};
 use crate::rom::{Result, byte, pointer, word};
 use dac::{Dac, Samples};
 use std::collections::VecDeque;
 use std::f64::consts::TAU;
+use std::sync::Arc;
 use track::Track;
 use ym2612::Chip;
 
@@ -31,6 +33,8 @@ const PSG_TICK_RATE: f64 = PSG_CLOCK / 16.0;
 const PRIORITY_TABLE: usize = 0x6ceac;
 /// `Sound_Queue` (`$FFFC00`): the game's 32-byte request ring.
 const REQUEST_RING: usize = 32;
+/// Rendered output's full scale, as a fraction of i16 full scale.
+const OUTPUT_SCALE: f64 = 28_000.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChannelKind {
@@ -81,6 +85,122 @@ pub fn render_cue(
     let mut pcm = vec![0i16; usize::try_from(frames * 2).map_err(|e| e.to_string())?];
     player.render(&mut pcm)?;
     Ok(pcm)
+}
+
+/// Seconds a template rendering may run looking for a loop or an end.
+const TEMPLATE_MUSIC_SECONDS: u32 = 8 * 60;
+const TEMPLATE_EFFECT_SECONDS: u32 = 60;
+/// Release time kept after a one-shot sound's sequences end.
+const TEMPLATE_TAIL_TICKS: u32 = 30;
+
+/// One command rendered for an audio pack template.
+pub struct Template {
+    /// Interleaved 48 kHz stereo.
+    pub pcm: Vec<i16>,
+    /// The loop's start and end frames.
+    pub looped: Option<(u64, u64)>,
+}
+
+/// A command as the sound test plays it, for an audio pack template: up to
+/// the point its sequences repeat, with that loop, or to its end plus a
+/// short release when it does not loop. Accepts music, effects and voices
+/// (`$81..$FB`).
+pub fn render_template(rom: &[u8], command: u8) -> Result<Template> {
+    const RATE: u32 = 48_000;
+    const TICK: usize = RATE as usize / 60;
+    let mut player = SoundPlayer::new(rom, RATE)?;
+    let seconds = match command {
+        0x81..=0x9c => TEMPLATE_MUSIC_SECONDS,
+        0x9d..=0xfb => TEMPLATE_EFFECT_SECONDS,
+        _ => {
+            return Err(format!(
+                "${command:02x} is not a music, effect or voice command"
+            ));
+        }
+    };
+    player.play_command(command);
+    let mut pcm = Vec::new();
+    // Sequence ticks exclude tempo ticks, which only hold the sequences
+    // (`$6A288`), so periods measured in them do not jitter with the tempo
+    // counter's phase. `ticks[n]` is the output tick of sequence tick `n`.
+    let mut ticks = Vec::new();
+    // Per track: the sequence tick each state was first seen, and the first
+    // repeat as (start, period).
+    let mut seen: Vec<std::collections::HashMap<u64, u32>> = Vec::new();
+    let mut repeats: Vec<Option<(u32, u32)>> = Vec::new();
+    let mut looped = None;
+    let mut tail = None;
+    for tick in 0..seconds * 60 {
+        let at = pcm.len();
+        pcm.resize(at + TICK * 2, 0);
+        player.render(&mut pcm[at..])?;
+        if let Some(left) = &mut tail {
+            *left -= 1;
+            if *left == 0 {
+                break;
+            }
+            continue;
+        }
+        if !player.sounding() {
+            tail = Some(TEMPLATE_TAIL_TICKS);
+            continue;
+        }
+        let globals = &player.globals;
+        if globals.tempo != 0 && globals.tempo_clock == globals.tempo {
+            continue;
+        }
+        // The state after an output tick decides the frames from its start.
+        let sequence = ticks.len() as u32;
+        ticks.push(tick);
+        if let Some((start, end)) = looped {
+            if sequence == end {
+                let frames = |n: u32| u64::from(ticks[n as usize]) * TICK as u64;
+                pcm.truncate(frames(end) as usize * 2);
+                let looped = Some((frames(start), frames(end)));
+                return Ok(Template { pcm, looped });
+            }
+            continue;
+        }
+        let tracks: Vec<_> = player.music.iter().chain(&player.effects).collect();
+        seen.resize_with(tracks.len(), Default::default);
+        repeats.resize(tracks.len(), None);
+        for ((track, seen), repeat) in tracks.iter().zip(&mut seen).zip(&mut repeats) {
+            use std::hash::Hasher;
+            let mut state = std::collections::hash_map::DefaultHasher::new();
+            track.hash_sequence(&mut state);
+            if repeat.is_none()
+                && let Some(first) = seen.insert(state.finish(), sequence)
+            {
+                *repeat = Some((first, sequence - first));
+            }
+        }
+        // Tracks repeat independently; the whole loops from the latest
+        // track's first repeat for their common period, keeping the first
+        // pass's tempo timing.
+        if let Some(found) = repeats.iter().copied().collect::<Option<Vec<_>>>() {
+            let start = found.iter().map(|r| r.0).max().unwrap_or(sequence);
+            let period = found.iter().fold(1, |period, r| lcm(period, r.1));
+            let end = start.saturating_add(period);
+            if end <= sequence {
+                let frames = |n: u32| u64::from(ticks[n as usize]) * TICK as u64;
+                pcm.truncate(frames(end) as usize * 2);
+                let looped = Some((frames(start), frames(end)));
+                return Ok(Template { pcm, looped });
+            }
+            looped = Some((start, end));
+        }
+    }
+    Ok(Template { pcm, looped: None })
+}
+
+fn lcm(a: u32, b: u32) -> u32 {
+    let gcd = |mut a: u32, mut b: u32| {
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a
+    };
+    (a / gcd(a, b)).saturating_mul(b)
 }
 
 /// A 16-bit stereo PCM WAV file holding interleaved `pcm` at `sample_rate`.
@@ -192,6 +312,13 @@ pub struct SoundPlayer {
     /// toward `music_gain_target` to avoid clicks.
     music_gain: f64,
     music_gain_target: f64,
+    /// Native: replacement audio (`set_pack`).
+    pack: Option<Arc<AudioPack>>,
+    /// The pack's file for the current music, whose sequence runs muted.
+    music_voice: Option<Voice>,
+    music_replaced: bool,
+    /// The pack's effects and voices, by command.
+    effect_voices: Vec<(u8, Voice)>,
 }
 /// Seconds a music gain change takes to complete.
 const MUSIC_GAIN_RAMP: f64 = 0.08;
@@ -235,7 +362,44 @@ impl SoundPlayer {
             stem: Stem::Mix,
             music_gain: 1.0,
             music_gain_target: 1.0,
+            pack: None,
+            music_voice: None,
+            music_replaced: false,
+            effect_voices: Vec::new(),
         })
+    }
+    /// Native: play an audio pack's files instead of the commands it
+    /// replaces. Current music restarts from its file; effects already
+    /// sounding finish with their original sound.
+    pub fn set_pack(&mut self, pack: Option<Arc<AudioPack>>) {
+        self.pack = pack;
+        self.effect_voices.clear();
+        for track in &mut self.effects {
+            track.muted = false;
+        }
+        let current = self.current_music();
+        self.start_music_voice(current);
+    }
+    pub fn pack(&self) -> Option<&Arc<AudioPack>> {
+        self.pack.as_ref()
+    }
+    fn start_music_voice(&mut self, command: Option<u8>) {
+        let clip = command.and_then(|c| self.pack.as_ref()?.clip(c).cloned());
+        self.music_replaced = clip.is_some();
+        self.music_voice = clip.map(|clip| Voice::new(clip, self.sample_rate));
+    }
+    /// Start the pack's file for an effect or voice the driver admitted.
+    fn start_effect_voice(&mut self, command: u8) {
+        if let Some(clip) = self.pack.as_ref().and_then(|p| p.clip(command)).cloned() {
+            self.effect_voices.retain(|(c, _)| *c != command);
+            self.effect_voices
+                .push((command, Voice::new(clip, self.sample_rate)));
+        }
+    }
+    fn replaced(&self, command: u8) -> bool {
+        self.pack
+            .as_ref()
+            .is_some_and(|p| p.clip(command).is_some())
     }
     /// Native: scale the music tracks (not the effects), for example while
     /// the pause window is open. The change ramps in over 80 ms.
@@ -247,6 +411,13 @@ impl SoundPlayer {
     /// update, as it would on the following main-loop frame.
     pub fn take_communication(&mut self) -> u8 {
         std::mem::take(&mut self.globals.communication)
+    }
+    /// Any music or effect sequence is still running.
+    fn sounding(&self) -> bool {
+        self.music
+            .iter()
+            .chain(&self.effects)
+            .any(|t| t.active || t.dac.as_ref().is_some_and(Dac::playing))
     }
     /// Mix only one chip's tracks (for FM/PSG balance measurements); `Stem::Mix` is the default.
     fn set_stem(&mut self, stem: Stem) {
@@ -313,6 +484,8 @@ impl SoundPlayer {
         }
         self.music = tracks;
         self.music_command = Some(command);
+        self.start_music_voice(Some(command));
+        self.effect_voices.clear();
         // $69DC8 stops SFX through $6A0F2, which also clears the priority latch.
         self.effects.clear();
         self.sfx_priority = 0;
@@ -333,6 +506,7 @@ impl SoundPlayer {
         if count > 6 {
             return Err("invalid SFX channel count".into());
         }
+        let muted = self.replaced(command);
         let mut tracks = Vec::new();
         for i in 0..count {
             let cursor = header + 4 + usize::from(i) * 6;
@@ -358,6 +532,8 @@ impl SoundPlayer {
             }
             // $69FAE stores the SFX voice-table pointer in track bytes 32..35.
             track.register_pointer = (instruments as u32).to_be_bytes();
+            track.command = command;
+            track.muted = muted;
             tracks.push(track);
         }
         if !self.admit(command)? {
@@ -367,6 +543,7 @@ impl SoundPlayer {
             self.effects.retain(|old| old.slot() != track.slot());
             self.effects.push(track);
         }
+        self.start_effect_voice(command);
         Ok(())
     }
     /// `$69D04`: a command is accepted when its `$6CEAC` priority is not below the latched
@@ -438,6 +615,9 @@ impl SoundPlayer {
     pub fn stop(&mut self) {
         self.music_command = None;
         self.music.clear();
+        self.music_voice = None;
+        self.music_replaced = false;
+        self.effect_voices.clear();
         self.effects.clear();
         self.sfx_priority = 0;
         self.globals = Globals::default();
@@ -513,8 +693,11 @@ impl SoundPlayer {
                 let mut track = Track::new(ChannelKind::Dac, 6, 0, 0, 1, 0, 0);
                 track.active = false;
                 track.dac = Some(sample);
+                track.command = command;
+                track.muted = self.replaced(command);
                 self.effects.retain(|old| old.kind != ChannelKind::Dac);
                 self.effects.push(track);
+                self.start_effect_voice(command);
             }
             0xfc => self.fade_out_music(),
             0xfd | 0xfe => {
@@ -537,6 +720,13 @@ impl SoundPlayer {
         for frame in out.as_chunks_mut::<2>().0 {
             if self.sample_clock < 60 {
                 self.tick()?;
+                // A pack effect lasts while any of its tracks still holds a
+                // channel, so stops and channel steals end it as they would
+                // the original; a natural end lets the file finish.
+                let effects = &self.effects;
+                self.effect_voices.retain(|(command, voice)| {
+                    !voice.finished() && effects.iter().any(|t| t.command == *command)
+                });
             }
             self.resample_position += step;
             while self.resample_position >= 1.0 {
@@ -545,6 +735,7 @@ impl SoundPlayer {
                 self.history.rotate_left(1);
                 self.history[3] = sample;
             }
+            let voices = self.voice_sample();
             // Cubic Hermite (Catmull-Rom) interpolation between history[1] and history[2].
             let t = self.resample_position;
             for (i, slot) in frame.iter_mut().enumerate() {
@@ -554,8 +745,9 @@ impl SoundPlayer {
                         * t
                         * (p2 - p0
                             + t * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3
-                                + t * (3.0 * (p1 - p2) + p3 - p0)));
-                *slot = (value.clamp(-1.0, 1.0) * 28_000.0).round() as i16;
+                                + t * (3.0 * (p1 - p2) + p3 - p0)))
+                    + voices[i];
+                *slot = (value.clamp(-1.0, 1.0) * OUTPUT_SCALE).round() as i16;
             }
             self.sample_clock += 60;
             if self.sample_clock >= u64::from(self.sample_rate) {
@@ -563,6 +755,33 @@ impl SoundPlayer {
             }
         }
         Ok(())
+    }
+    /// One output-rate frame of the pack's files, in the synthesized mix's scale.
+    /// Music follows the pause gain, `$FC` fade and sequence pause.
+    fn voice_sample(&mut self) -> [f64; 2] {
+        let mut mixed = [0.0; 2];
+        if self.stem != Stem::Mix {
+            return mixed;
+        }
+        let (steps, _) = self.globals.fade_out;
+        let fade = if steps == 0 {
+            1.0
+        } else {
+            f64::from(steps) / f64::from(FADE_OUT_STEPS)
+        };
+        if !self.globals.music_paused
+            && let Some(sample) = self.music_voice.as_mut().and_then(Voice::sample)
+        {
+            for (mix, value) in mixed.iter_mut().zip(sample) {
+                *mix += f64::from(value) * self.music_gain * fade;
+            }
+        }
+        for (_, voice) in &mut self.effect_voices {
+            for (mix, value) in mixed.iter_mut().zip(voice.sample().unwrap_or_default()) {
+                *mix += f64::from(value);
+            }
+        }
+        mixed.map(|value| value * 32_768.0 / OUTPUT_SCALE)
     }
     /// Mix one FM-rate (53267 Hz) stereo sample and low-pass it for resampling.
     fn chip_sample(&mut self) -> [f64; 2] {
@@ -574,10 +793,11 @@ impl SoundPlayer {
         for track in &mut self.music {
             let value = track.render(&clock);
             let overridden = self.effects.iter().any(|effect| {
-                (effect.active || effect.dac.as_ref().is_some_and(Dac::playing))
+                !effect.muted
+                    && (effect.active || effect.dac.as_ref().is_some_and(Dac::playing))
                     && effect.slot() == track.slot()
             });
-            if !overridden && !self.globals.music_paused {
+            if !overridden && !self.globals.music_paused && !self.music_replaced {
                 let gain = self.stem.gain(track.kind) * music_gain;
                 mixed[0] += value[0] * gain;
                 mixed[1] += value[1] * gain;
@@ -585,7 +805,11 @@ impl SoundPlayer {
         }
         for track in &mut self.effects {
             let value = track.render(&clock);
-            let gain = self.stem.gain(track.kind) * track.mix_gain;
+            let gain = if track.muted {
+                0.0
+            } else {
+                self.stem.gain(track.kind) * track.mix_gain
+            };
             mixed[0] += value[0] * gain;
             mixed[1] += value[1] * gain;
         }
@@ -595,3 +819,6 @@ impl SoundPlayer {
         mixed
     }
 }
+
+#[cfg(test)]
+mod pack_tests;

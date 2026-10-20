@@ -1,19 +1,20 @@
 //! Versioned PNG/JSON art packs. Coordinates and gameplay stay in native pixels.
-use crate::render::{Color, Palette, Tile};
+use crate::{
+    pack::{Kind, Member, Source},
+    render::{Color, Palette, Tile},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs,
-    io::{BufRead, BufReader},
-    path::Path,
+    io::{BufRead, BufReader, Cursor},
+    path::{Path, PathBuf},
     rc::Rc,
 };
 
-mod library;
 mod player;
-mod source;
 mod template;
-pub use library::{Library, PackEntry, library_directory, resolve_selection, selection_value};
+pub use crate::pack::{Library, PackEntry, resolve_selection, selection_value};
 pub use player::PlayerSheet;
 pub use template::export_template;
 
@@ -21,6 +22,45 @@ pub const MANIFEST: &str = "pack.json";
 pub const MAX_SCALE: usize = 10;
 const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PACK_BYTES: usize = 1024 * 1024 * 1024;
+const MAX_PNG_BYTES: usize = MAX_IMAGE_BYTES * 2 + 1024 * 1024;
+
+pub static KIND: Kind = Kind {
+    manifest: MANIFEST,
+    folder: "art-packs",
+    env: "NINJA_MASTER_ART_PACKS",
+    max_bytes: MAX_PACK_BYTES,
+    name: |source| Ok(manifest(source)?.name),
+};
+
+pub fn library_directory() -> PathBuf {
+    crate::pack::library_directory(&KIND)
+}
+
+/// Discovery validates references without decoding potentially large PNGs.
+fn manifest(source: &mut Source) -> Result<Manifest, String> {
+    let manifest: Manifest = serde_json::from_slice(&source.manifest_bytes()?)
+        .map_err(|e| format!("{MANIFEST}: {e}"))?;
+    if manifest.version != 1 {
+        return Err(format!("unsupported art pack version {}", manifest.version));
+    }
+    if manifest.name.contains('\0') {
+        return Err("pack name cannot contain a null character".into());
+    }
+    for sheet in &manifest.sheets {
+        source.location(&sheet.file)?;
+    }
+    for sheet in &manifest.player_frames {
+        source.location(&sheet.file)?;
+    }
+    Ok(manifest)
+}
+
+fn image(source: &mut Source, name: &str) -> Result<(usize, usize, Vec<[u8; 4]>), String> {
+    match source.member(name, MAX_PNG_BYTES)? {
+        Member::File(path) => read_png(&path),
+        Member::Bytes(bytes) => decode_png(Cursor::new(bytes)),
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -83,8 +123,8 @@ pub struct ArtPack {
 impl ArtPack {
     /// A pack directory, pack.json, or a ZIP with one root/wrapped manifest.
     pub fn load(path: &Path) -> Result<Self, String> {
-        let mut source = source::Source::open(path)?;
-        let manifest = source.manifest()?;
+        let mut source = Source::open(path, &KIND)?;
+        let manifest = manifest(&mut source)?;
         let mut pack = Self {
             name: manifest.name,
             scale: 1,
@@ -93,7 +133,7 @@ impl ArtPack {
         };
         let mut total = 0;
         for sheet in manifest.sheets {
-            let (width, height, image) = source.image(&sheet.file)?;
+            let (width, height, image) = image(&mut source, &sheet.file)?;
             total += image.len() * 4;
             if total > MAX_PACK_BYTES {
                 return Err("art pack exceeds 1 GiB of decoded sheets".into());

@@ -1,4 +1,4 @@
-use super::{MAX_PACK_BYTES, MAX_SCALE, Palette, Replacement, source::Source};
+use super::{MAX_PACK_BYTES, MAX_SCALE, Palette, Replacement, Source, image};
 use crate::{assets::PlayerAssets, render::Flip};
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -51,7 +51,7 @@ impl PlayerArt {
             {
                 return Err("invalid player frame bounds or frame ID".into());
             }
-            let (width, height, pixels) = source.image(&sheet.file)?;
+            let (width, height, pixels) = image(source, &sheet.file)?;
             *total += pixels.len() * 4;
             if *total > MAX_PACK_BYTES {
                 return Err("art pack exceeds 1 GiB of decoded sheets".into());

@@ -1,27 +1,34 @@
 //! Bounded file/archive reads. ZIP members are decoded directly, never extracted.
-use super::{MANIFEST, MAX_IMAGE_BYTES, MAX_PACK_BYTES, Manifest};
+use super::Kind;
 use std::{
     collections::BTreeMap,
     fs,
-    io::{Cursor, Read},
+    io::Read,
     path::{Component, Path, PathBuf},
 };
 use zip::ZipArchive;
 
 const MAX_MANIFEST_BYTES: usize = 16 * 1024 * 1024;
-const MAX_PNG_BYTES: usize = MAX_IMAGE_BYTES * 2 + 1024 * 1024;
 
-pub(super) enum Source {
+pub enum Source {
     Directory {
+        kind: &'static Kind,
         root: PathBuf,
         manifest: PathBuf,
     },
     Zip {
+        kind: &'static Kind,
         archive: ZipArchive<fs::File>,
         entries: BTreeMap<String, usize>,
         root: String,
         manifest: String,
     },
+}
+
+/// A pack file: a path inside a pack folder, or a ZIP member's bytes.
+pub enum Member {
+    File(PathBuf),
+    Bytes(Vec<u8>),
 }
 
 pub(super) fn is_zip(path: &Path) -> bool {
@@ -45,7 +52,7 @@ fn relative(name: &str) -> Result<&Path, String> {
     Ok(path)
 }
 
-fn read_bounded(reader: impl Read, limit: usize) -> Result<Vec<u8>, String> {
+pub fn read_bounded(reader: impl Read, limit: usize) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     reader
         .take(limit as u64 + 1)
@@ -58,10 +65,12 @@ fn read_bounded(reader: impl Read, limit: usize) -> Result<Vec<u8>, String> {
 }
 
 impl Source {
-    pub(super) fn open(path: &Path) -> Result<Self, String> {
+    /// A pack directory, its manifest, or a ZIP with one root/wrapped manifest.
+    pub fn open(path: &Path, kind: &'static Kind) -> Result<Self, String> {
+        let name = kind.manifest;
         if is_zip(path) && !path.is_dir() {
-            if fs::metadata(path).map_err(|e| e.to_string())?.len() > MAX_PACK_BYTES as u64 {
-                return Err("ZIP exceeds 1 GiB".into());
+            if fs::metadata(path).map_err(|e| e.to_string())?.len() > kind.max_bytes as u64 {
+                return Err(format!("ZIP exceeds {} MiB", kind.max_bytes / 1024 / 1024));
             }
             let mut archive = ZipArchive::new(fs::File::open(path).map_err(|e| e.to_string())?)
                 .map_err(|e| format!("ZIP: {e}"))?;
@@ -72,30 +81,30 @@ impl Source {
             let mut manifests = Vec::new();
             for i in 0..archive.len() {
                 let file = archive.by_index(i).map_err(|e| format!("ZIP: {e}"))?;
-                let name = file.name().trim_end_matches('/');
-                relative(name)?;
+                let member = file.name().trim_end_matches('/');
+                relative(member)?;
                 if file.is_symlink() {
                     return Err("ZIP cannot contain symbolic links".into());
                 }
                 if file.is_dir() {
                     continue;
                 }
-                if entries.insert(name.to_owned(), i).is_some() {
-                    return Err(format!("duplicate ZIP entry: {name}"));
+                if entries.insert(member.to_owned(), i).is_some() {
+                    return Err(format!("duplicate ZIP entry: {member}"));
                 }
-                if name == MANIFEST || name.ends_with(&format!("/{MANIFEST}")) {
-                    manifests.push(name.to_owned());
+                if member == name || member.ends_with(&format!("/{name}")) {
+                    manifests.push(member.to_owned());
                 }
             }
             if manifests.len() != 1 {
-                return Err(
-                    "ZIP must contain exactly one pack.json, at its root or inside a pack folder"
-                        .into(),
-                );
+                return Err(format!(
+                    "ZIP must contain exactly one {name}, at its root or inside a pack folder"
+                ));
             }
             let manifest = manifests.pop().unwrap();
-            let root = manifest.strip_suffix(MANIFEST).unwrap().to_owned();
+            let root = manifest.strip_suffix(name).unwrap().to_owned();
             Ok(Self::Zip {
+                kind,
                 archive,
                 entries,
                 root,
@@ -103,7 +112,7 @@ impl Source {
             })
         } else {
             let manifest = if path.is_dir() {
-                path.join(MANIFEST)
+                path.join(name)
             } else {
                 path.to_owned()
             };
@@ -114,16 +123,26 @@ impl Source {
                     .unwrap_or(Path::new(".")),
             )
             .map_err(|e| e.to_string())?;
-            Ok(Self::Directory { root, manifest })
+            Ok(Self::Directory {
+                kind,
+                root,
+                manifest,
+            })
         }
     }
 
-    pub(super) fn manifest(&mut self) -> Result<Manifest, String> {
-        let bytes = match self {
+    pub fn kind(&self) -> &'static Kind {
+        match self {
+            Self::Directory { kind, .. } | Self::Zip { kind, .. } => kind,
+        }
+    }
+
+    pub fn manifest_bytes(&mut self) -> Result<Vec<u8>, String> {
+        match self {
             Self::Directory { manifest, .. } => read_bounded(
                 fs::File::open(manifest).map_err(|e| e.to_string())?,
                 MAX_MANIFEST_BYTES,
-            )?,
+            ),
             Self::Zip {
                 archive,
                 entries,
@@ -132,28 +151,13 @@ impl Source {
             } => {
                 let index = entries[manifest];
                 let file = archive.by_index(index).map_err(|e| format!("ZIP: {e}"))?;
-                read_bounded(file, MAX_MANIFEST_BYTES)?
+                read_bounded(file, MAX_MANIFEST_BYTES)
             }
-        };
-        let manifest: Manifest =
-            serde_json::from_slice(&bytes).map_err(|e| format!("pack.json: {e}"))?;
-        if manifest.version != 1 {
-            return Err(format!("unsupported art pack version {}", manifest.version));
         }
-        if manifest.name.contains('\0') {
-            return Err("pack name cannot contain a null character".into());
-        }
-        // Discovery validates references without decoding potentially large PNGs.
-        for sheet in &manifest.sheets {
-            self.location(&sheet.file)?;
-        }
-        for sheet in &manifest.player_frames {
-            self.location(&sheet.file)?;
-        }
-        Ok(manifest)
     }
 
-    fn location(&self, name: &str) -> Result<String, String> {
+    /// Check that `name` stays inside the pack and exists, without reading it.
+    pub fn location(&self, name: &str) -> Result<String, String> {
         let relative = relative(name)?;
         match self {
             Self::Directory { root, .. } => {
@@ -161,7 +165,7 @@ impl Source {
                     fs::canonicalize(root.join(relative)).map_err(|e| format!("{name}: {e}"))?;
                 if !path.starts_with(root) || !path.is_file() {
                     return Err(format!(
-                        "sheet leaves pack directory or is not a file: {name}"
+                        "file leaves pack directory or is not a file: {name}"
                     ));
                 }
                 Ok(name.to_owned())
@@ -169,26 +173,36 @@ impl Source {
             Self::Zip { entries, root, .. } => {
                 let key = format!("{root}{name}");
                 if !entries.contains_key(&key) {
-                    return Err(format!("ZIP sheet is missing: {name}"));
+                    return Err(format!("ZIP file is missing: {name}"));
                 }
                 Ok(key)
             }
         }
     }
 
-    pub(super) fn image(&mut self, name: &str) -> Result<(usize, usize, Vec<[u8; 4]>), String> {
+    /// A folder file's path, or up to `limit` bytes of a ZIP member.
+    pub fn member(&mut self, name: &str, limit: usize) -> Result<Member, String> {
         let location = self.location(name)?;
         match self {
-            Self::Directory { root, .. } => super::read_png(&root.join(location)),
+            Self::Directory { root, .. } => Ok(Member::File(root.join(location))),
             Self::Zip {
                 archive, entries, ..
             } => {
                 let file = archive
                     .by_index(entries[&location])
                     .map_err(|e| format!("ZIP: {e}"))?;
-                let bytes = read_bounded(file, MAX_PNG_BYTES)?;
-                super::decode_png(Cursor::new(bytes))
+                read_bounded(file, limit).map(Member::Bytes)
             }
+        }
+    }
+
+    /// Up to `limit` bytes of a pack file.
+    pub fn read(&mut self, name: &str, limit: usize) -> Result<Vec<u8>, String> {
+        match self.member(name, limit)? {
+            Member::File(path) => {
+                read_bounded(fs::File::open(path).map_err(|e| e.to_string())?, limit)
+            }
+            Member::Bytes(bytes) => Ok(bytes),
         }
     }
 }

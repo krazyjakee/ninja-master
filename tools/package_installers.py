@@ -77,6 +77,7 @@ def linux_tree(stage, destination):
     launcher.write_text('''#!/bin/sh
 set -eu
 export NINJA_MASTER_ART_PACKS="${NINJA_MASTER_ART_PACKS:-${XDG_DATA_HOME:-$HOME/.local/share}/ninja-master/art-packs}"
+export NINJA_MASTER_AUDIO_PACKS="${NINJA_MASTER_AUDIO_PACKS:-${XDG_DATA_HOME:-$HOME/.local/share}/ninja-master/audio-packs}"
 exec /usr/lib/ninja-master/ninja-master-native "$@"
 ''')
     launcher.chmod(0o755)

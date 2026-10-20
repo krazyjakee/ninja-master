@@ -141,6 +141,9 @@ pub struct Settings {
     /// Master volume, 0..=100 percent.
     pub volume: u8,
     pub muted: bool,
+    /// Selected audio pack, relative to the audio pack folder; empty for the
+    /// synthesized soundtrack.
+    pub audio_pack: String,
     /// Empty accepts every connected controller; otherwise its SDL name.
     pub controller: String,
     pub keyboard: Bindings,
@@ -164,6 +167,7 @@ impl Default for Settings {
             crt_curvature: 25,
             volume: MAX_VOLUME,
             muted: false,
+            audio_pack: String::new(),
             controller: String::new(),
             keyboard: Bindings::default_keyboard(),
             gamepad: Bindings::default_gamepad(),
@@ -254,6 +258,10 @@ impl Settings {
             },
             ("art", "pack") => {
                 self.art_pack = value.to_owned();
+                Applied::Ok
+            }
+            ("audio", "pack") => {
+                self.audio_pack = value.to_owned();
                 Applied::Ok
             }
             ("display", "aspect") => match value.parse::<usize>() {
@@ -396,8 +404,8 @@ impl Settings {
         out.push_str(&format!("\n[art]\npack = {}\n", self.art_pack));
         extras(&mut out, "art");
         out.push_str(&format!(
-            "\n[audio]\nvolume = {}\nmuted = {}\n",
-            self.volume, self.muted
+            "\n[audio]\nvolume = {}\nmuted = {}\npack = {}\n",
+            self.volume, self.muted, self.audio_pack
         ));
         extras(&mut out, "audio");
         out.push_str(&format!("\n[input]\ncontroller = {}\n", self.controller));
@@ -655,6 +663,7 @@ mod tests {
             crt_curvature: 35,
             volume: 40,
             muted: true,
+            audio_pack: "Arranged soundtrack.zip".into(),
             controller: "Test controller".into(),
             ..Settings::default()
         };

@@ -71,7 +71,7 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue(a.findall(".//w:RemoveFolder", ns))
             self.assertEqual(a.find(".//w:Shortcut", ns).get("Target"), "[INSTALLDIR]ninja-master-native.exe")
 
-    def test_linux_launcher_uses_user_art_pack_folder_and_integrated_icons(self):
+    def test_linux_launcher_uses_user_pack_folders_and_integrated_icons(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             stage = tmp / "stage"
@@ -81,6 +81,8 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue((payload / "LICENSE").is_file())
             script = (root / "usr/bin/ninja-master").read_text()
             self.assertIn("XDG_DATA_HOME", script)
+            self.assertIn("/ninja-master/art-packs}", script)
+            self.assertIn("/ninja-master/audio-packs}", script)
             self.assertIn('ninja-master-native "$@"', script)
             self.assertTrue((root / "usr/share/icons/hicolor/256x256/apps/ninja-master.png").is_file())
             self.assertTrue((root / "usr/share/doc/ninja-master/third-party-licenses/test-license.txt").is_file())

@@ -1,5 +1,6 @@
 mod art;
 mod audio;
+mod audio_packs;
 mod benchmark;
 mod capture;
 mod input;
@@ -10,6 +11,7 @@ mod presentation;
 mod crt;
 mod gallery;
 mod gui;
+mod packs;
 mod panel;
 mod rom_picker;
 #[allow(unsafe_code)]
@@ -28,6 +30,7 @@ use crate::{Options, Scene};
 use ninja_master_native::{
     HEIGHT,
     art_pack::{ArtPack, export_template, library_directory, resolve_selection, selection_value},
+    audio_pack::{self, AudioPack, Section},
     devtools::DevTools,
     input::{Button, InputLatch},
     render::Frame,
@@ -42,8 +45,9 @@ use sdl2::{
 };
 use std::{
     collections::HashSet,
-    path::Path,
+    path::{Path, PathBuf},
     rc::Rc,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -112,6 +116,18 @@ pub(super) fn run(
         }
     }
     frame.smooth_wave_effects = settings.smooth_wave_effects;
+    let mut audio_status = String::new();
+    if let Some(player) = soundtrack.as_mut()
+        && !settings.audio_pack.is_empty()
+    {
+        let path = resolve_selection(&audio_pack::library_directory(), &settings.audio_pack);
+        match AudioPack::load(&path) {
+            Ok(pack) => player.set_pack(Some(Arc::new(pack))),
+            Err(error) => audio_status = format!("Could not load audio: {error}"),
+        }
+    }
+    // Rendering a template takes a minute, so it runs beside the game.
+    let mut audio_export: Option<std::thread::JoinHandle<Result<PathBuf, String>>> = None;
 
     let sdl = sdl2::init()?;
     let video = sdl.video()?;
@@ -237,6 +253,11 @@ pub(super) fn run(
         ""
     });
     panel.gallery.set_art_pack(frame.art_pack());
+    panel.set_audio_selection(if soundtrack.as_ref().is_some_and(|s| s.pack().is_some()) {
+        &settings.audio_pack
+    } else {
+        ""
+    });
     let mut show_panel = options.devtools;
     let mut performance = performance::Performance::default();
     let mut screenshots = capture::Capture::default();
@@ -949,6 +970,26 @@ pub(super) fn run(
                     .iter()
                     .find(|pad| settings.controller.is_empty() || pad.name() == settings.controller)
                     .map_or([0; 2], |pad| [pad.axis(Axis::LeftX), pad.axis(Axis::LeftY)]);
+                if audio_export
+                    .as_ref()
+                    .is_some_and(std::thread::JoinHandle::is_finished)
+                {
+                    let result = audio_export
+                        .take()
+                        .unwrap()
+                        .join()
+                        .unwrap_or_else(|_| Err("the export stopped unexpectedly".into()));
+                    audio_status = match result {
+                        Ok(folder) => {
+                            panel.refresh_audio_packs();
+                            format!(
+                                "Template exported to {}. Replace its files, then select it from Audio.",
+                                folder.display()
+                            )
+                        }
+                        Err(error) => format!("Could not export template: {error}"),
+                    };
+                }
                 let track = track_name(
                     rom,
                     soundtrack
@@ -969,6 +1010,18 @@ pub(super) fn run(
                         },
                     ),
                     art_status: &art_status,
+                    audio_name: &soundtrack.as_ref().and_then(|s| s.pack()).map_or_else(
+                        || "Original".to_owned(),
+                        |p| {
+                            let [music, effects, voices] = Section::ALL.map(|s| p.count(s));
+                            format!(
+                                "{} ({music} music, {effects} effects, {voices} voices)",
+                                p.name
+                            )
+                        },
+                    ),
+                    audio_status: &audio_status,
+                    audio_exporting: audio_export.is_some(),
                     ticks: total_ticks,
                     controllers: &controller_names,
                     capture,
@@ -1040,6 +1093,43 @@ pub(super) fn run(
                         scene.draw(frame);
                         upload = true;
                     }
+                }
+                if let Some(action) = actions.audio {
+                    match action {
+                        audio_packs::Action::Load(path) => match AudioPack::load(&path) {
+                            Ok(pack) => {
+                                audio_status = format!("Loaded {}.", pack.name);
+                                if soundtrack.is_none() {
+                                    audio_status +=
+                                        " Sound is off in this mode; play mode uses it.";
+                                }
+                                settings.audio_pack =
+                                    selection_value(&audio_pack::library_directory(), &path);
+                                if let Some(player) = soundtrack.as_mut() {
+                                    player.set_pack(Some(Arc::new(pack)));
+                                }
+                            }
+                            Err(error) => audio_status = format!("Could not load pack: {error}"),
+                        },
+                        audio_packs::Action::Original => {
+                            settings.audio_pack.clear();
+                            audio_status = "Using the original soundtrack.".into();
+                            if let Some(player) = soundtrack.as_mut() {
+                                player.set_pack(None);
+                            }
+                        }
+                        audio_packs::Action::Export(folder) => {
+                            let rom = rom.to_vec();
+                            audio_status = format!(
+                                "Rendering the audio template into {}...",
+                                folder.display()
+                            );
+                            audio_export = Some(std::thread::spawn(move || {
+                                audio_pack::export_template(&rom, &folder).map(|()| folder)
+                            }));
+                        }
+                    }
+                    panel.set_audio_selection(&settings.audio_pack);
                 }
                 if let Some(binding) = actions.capture {
                     capture = Some(binding);
