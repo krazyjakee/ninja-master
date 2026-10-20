@@ -95,8 +95,13 @@ pub struct Entry {
     pub title: String,
     #[serde(default = "full_volume", skip_serializing_if = "is_full_volume")]
     pub volume: f32,
-    /// Sample frame playback returns to after `loop_end`. Without it the
-    /// file plays once.
+    /// Repeat the file: between its own loop points (a WAV `smpl` loop, or
+    /// Ogg `LOOPSTART` with `LOOPLENGTH`/`LOOPEND` tags) or else whole.
+    /// Files with their own loop points always loop.
+    #[serde(default, rename = "loop", skip_serializing_if = "is_false")]
+    pub looping: bool,
+    /// Sample frame playback returns to after `loop_end`, overriding the
+    /// file's loop. Points that do not fit the file are ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_start: Option<u64>,
     /// Sample frame that ends each loop; the end of the file by default.
@@ -108,6 +113,9 @@ fn full_volume() -> f32 {
 }
 fn is_full_volume(volume: &f32) -> bool {
     *volume == 1.0
+}
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 /// A manifest key: the driver command as two hex digits.
@@ -154,6 +162,8 @@ fn manifest(source: &mut Source) -> Result<Manifest, String> {
 pub struct AudioPack {
     pub name: String,
     clips: HashMap<u8, Arc<Clip>>,
+    /// Entries skipped or adjusted while loading, one line each.
+    pub notes: Vec<String>,
 }
 
 impl AudioPack {
@@ -162,21 +172,36 @@ impl AudioPack {
         let mut source = Source::open(path, &KIND)?;
         let manifest = manifest(&mut source)?;
         let mut clips = HashMap::new();
+        let mut notes = Vec::new();
         let mut total = 0;
         for section in Section::ALL {
             for (key, entry) in manifest.section(section) {
-                let bytes = source.read(&entry.file, MAX_FILE_BYTES)?;
-                total += bytes.len();
-                if total > MAX_PACK_BYTES {
-                    return Err("audio pack exceeds 1 GiB".into());
+                // One unreadable file keeps its original sound, not the
+                // pack from loading.
+                let clip = source.read(&entry.file, MAX_FILE_BYTES).and_then(|bytes| {
+                    total += bytes.len();
+                    if total > MAX_PACK_BYTES {
+                        return Err("audio pack exceeds 1 GiB".into());
+                    }
+                    Clip::load(bytes, entry)
+                });
+                match clip {
+                    Ok(clip) => {
+                        notes.extend(clip.notes.iter().map(|n| format!("{}: {n}", entry.file)));
+                        clips.insert(command(section, key)?, Arc::new(clip));
+                    }
+                    Err(error) if total > MAX_PACK_BYTES => return Err(error),
+                    Err(error) => notes.push(format!(
+                        "{}: {error}; keeping the original sound",
+                        entry.file
+                    )),
                 }
-                let clip = Clip::load(bytes, entry).map_err(|e| format!("{}: {e}", entry.file))?;
-                clips.insert(command(section, key)?, Arc::new(clip));
             }
         }
         Ok(Self {
             name: manifest.name,
             clips,
+            notes,
         })
     }
 
@@ -184,6 +209,7 @@ impl AudioPack {
     pub(crate) fn with_clips(clips: impl IntoIterator<Item = (u8, Clip)>) -> Self {
         Self {
             name: "test".into(),
+            notes: Vec::new(),
             clips: clips
                 .into_iter()
                 .map(|(c, clip)| (c, Arc::new(clip)))

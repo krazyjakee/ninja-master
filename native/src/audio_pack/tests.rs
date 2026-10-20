@@ -2,12 +2,15 @@ use super::*;
 use crate::sound::wav_bytes;
 
 const OGG: &[u8] = include_bytes!("../../tests/data/audio/sine-left-32k.ogg");
+/// The same audio tagged `LOOPSTART=8000`, `LOOPLENGTH=16000`.
+const TAGGED_OGG: &[u8] = include_bytes!("../../tests/data/audio/sine-loop-tags-32k.ogg");
 
 fn entry(file: &str) -> Entry {
     Entry {
         file: file.into(),
         title: String::new(),
         volume: 1.0,
+        looping: false,
         loop_start: None,
         loop_end: None,
     }
@@ -79,21 +82,68 @@ fn loops_repeat_between_their_frames() {
 }
 
 #[test]
-fn invalid_loops_and_files_are_rejected() {
+fn loops_that_do_not_fit_loop_the_whole_file_instead_of_failing() {
     let wav = ramp_wav(100, 48_000);
-    for (start, end) in [
-        (Some(50), Some(50)),
-        (Some(0), Some(101)),
-        (None, Some(10)),
-        (Some(100), None),
-    ] {
+    let looped = |start, end| {
         let mut looped = entry("a.wav");
         (looped.loop_start, looped.loop_end) = (start, end);
-        assert!(
-            Clip::load(wav.clone(), &looped).is_err(),
-            "{start:?}..{end:?}"
-        );
-    }
+        let clip = Clip::load(wav.clone(), &looped).unwrap();
+        ((clip.loop_start, clip.loop_end), clip.notes.len())
+    };
+    // A replaced file keeps the original's points, measured in other frames.
+    assert_eq!(looped(Some(312_800), Some(3_384_800)), ((Some(0), 100), 1));
+    assert_eq!(looped(Some(50), Some(50)), ((Some(0), 100), 1));
+    assert_eq!(looped(Some(0), Some(101)), ((Some(0), 100), 1));
+    assert_eq!(looped(Some(100), None), ((Some(0), 100), 1));
+    assert_eq!(looped(None, Some(10)), ((Some(0), 10), 0));
+    assert_eq!(looped(Some(5), Some(10)), ((Some(5), 10), 0));
+    let mut whole = entry("a.wav");
+    whole.looping = true;
+    let clip = Clip::load(wav.clone(), &whole).unwrap();
+    assert_eq!(
+        (clip.loop_start, clip.loop_end, clip.notes.len()),
+        (Some(0), 100, 0)
+    );
+    let once = Clip::load(wav, &entry("a.wav")).unwrap();
+    assert_eq!((once.loop_start, once.loop_end), (None, 100));
+}
+
+#[test]
+fn files_carry_their_own_loop_points() {
+    let pcm: Vec<i16> = (0..100).flat_map(|i| [i * 10, -i * 10]).collect();
+    let wav = template::looping_wav(&pcm, Some((10, 20))).unwrap();
+    assert_eq!(clip::wav_loop(&wav), Some((10, 20)));
+    // Files with loop points loop even when the entry does not say so.
+    let clip = Clip::load(wav.clone(), &entry("a.wav")).unwrap();
+    assert_eq!(
+        (clip.frames, clip.loop_start, clip.loop_end),
+        (100, Some(10), 20)
+    );
+    let mut voice = Voice::new(Arc::new(clip), 48_000);
+    let left: Vec<_> = play(&mut voice, 30)
+        .iter()
+        .map(|s| level(s[0]) / 10.0)
+        .collect();
+    let expected: Vec<_> = (0..20).chain(10..20).map(|i| i as f32).collect();
+    assert_eq!(left, expected);
+    // The manifest overrides them when its points fit, and falls back to them.
+    let mut looped = entry("a.wav");
+    (looped.loop_start, looped.loop_end) = (Some(30), Some(40));
+    let clip = Clip::load(wav.clone(), &looped).unwrap();
+    assert_eq!((clip.loop_start, clip.loop_end), (Some(30), 40));
+    looped.loop_end = Some(4_000);
+    let clip = Clip::load(wav, &looped).unwrap();
+    assert_eq!(
+        (clip.loop_start, clip.loop_end, clip.notes.len()),
+        (Some(10), 20, 1)
+    );
+
+    let clip = Clip::load(TAGGED_OGG.to_vec(), &entry("a.ogg")).unwrap();
+    assert_eq!((clip.loop_start, clip.loop_end), (Some(8_000), 24_000));
+}
+
+#[test]
+fn unreadable_files_are_rejected() {
     assert!(Clip::load(b"ID3 not audio".to_vec(), &entry("a.mp3")).is_err());
     assert!(Clip::load(ramp_wav(0, 48_000), &entry("a.wav")).is_err());
     assert!(Clip::load(ramp_wav(10, 4_000), &entry("a.wav")).is_err());
@@ -137,9 +187,11 @@ fn packs_load_from_folders_and_validate_on_discovery() {
     std::fs::create_dir_all(dir.join("music")).unwrap();
     std::fs::write(dir.join("music/forest.ogg"), OGG).unwrap();
     std::fs::write(dir.join("hit.wav"), ramp_wav(100, 22_050)).unwrap();
+    std::fs::write(dir.join("junk.wav"), "not audio").unwrap();
     let manifest = r#"{"version": 1, "name": "Test pack",
-        "music": {"93": {"file": "music/forest.ogg", "loop_start": 0}},
-        "effects": {"A5": {"file": "hit.wav", "volume": 0.5, "title": "WARNING"}}}"#;
+        "music": {"93": {"file": "music/forest.ogg", "loop_start": 312800, "loop_end": 3384800}},
+        "effects": {"A5": {"file": "hit.wav", "volume": 0.5, "title": "WARNING"},
+                    "A6": {"file": "junk.wav"}}}"#;
     std::fs::write(dir.join(MANIFEST), manifest).unwrap();
     let entry = PackEntry::read(&dir, &KIND).unwrap();
     assert_eq!(entry.name, "Test pack");
@@ -150,7 +202,11 @@ fn packs_load_from_folders_and_validate_on_discovery() {
         "music and effects"
     );
     assert_eq!(pack.clip(0xa5).unwrap().volume, 0.5);
+    // Stale loop points loop the whole file; an unreadable file keeps the
+    // original sound. Both load and say so.
     assert_eq!(pack.clip(0x93).unwrap().loop_start, Some(0));
+    assert!(pack.clip(0xa6).is_none());
+    assert_eq!(pack.notes.len(), 2, "{:?}", pack.notes);
 
     for bad in [
         r#"{"version": 2, "name": ""}"#,
@@ -188,6 +244,13 @@ fn templates_round_trip_as_packs_with_every_sound() {
     let manifest: Manifest =
         serde_json::from_slice(&std::fs::read(path.join(MANIFEST)).unwrap()).unwrap();
     let forest = &manifest.music["93"];
-    assert!(forest.loop_start.is_some() && !forest.title.is_empty());
+    assert!(forest.looping && forest.loop_start.is_none() && !forest.title.is_empty());
+    let clip = pack.clip(0x93).unwrap();
+    assert!(clip.loop_start.is_some_and(|start| start > 0) && clip.loop_end == clip.frames);
+    assert!(pack.notes.is_empty(), "{:?}", pack.notes);
+    assert!(
+        pack.clip(0x91).unwrap().loop_start.is_none(),
+        "ROUND CLEAR plays once"
+    );
     fs_remove(&path).unwrap();
 }

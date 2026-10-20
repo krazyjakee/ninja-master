@@ -24,10 +24,13 @@ Replace any file with your own .wav or .ogg (Vorbis), mono or stereo, at any
 sample rate, and update its \"file\" in audio-pack.json. Delete the entries you
 do not replace: missing entries keep the original synthesized sound.
 
-Music loops between loop_start and loop_end (sample frames of that file;
-loop_end defaults to the end of the file). Entries without loop_start play
-once. A new file needs loop points measured in its own sample frames.
-\"volume\" scales an entry (1.0 by default, up to 4.0). \"title\" is only a note.
+Entries marked \"loop\": true repeat. The rendered WAVs carry the original
+loop points in their own smpl chunk, so a file you swap in simply loops whole.
+To loop part of your file, give it its own loop points (a WAV smpl loop, or
+LOOPSTART with LOOPLENGTH tags in an Ogg file), or set \"loop_start\" and
+\"loop_end\" in sample frames of that file; points that do not fit are
+ignored. \"volume\" scales an entry (1.0 by default, up to 4.0). \"title\" is
+only a note.
 
 Select the pack in the F1 panel's Audio packs tab; Reload audio picks up
 edits. The originals are rendered at the game's level, so files normalized
@@ -69,16 +72,19 @@ pub fn export_template(rom: &[u8], path: &Path) -> Result<(), String> {
                 .flat_map(|word| ["-", word])
                 .collect();
             let file = format!("{folder}/{command:02X}{slug}.wav");
-            fs::write(path.join(&file), wav_bytes(&pcm, 48_000)?)
+            fs::write(path.join(&file), looping_wav(&pcm, looped)?)
                 .map_err(|e| format!("{file}: {e}"))?;
+            // Loop points stay with the rendered file: a replacement that
+            // lacks them loops whole instead of at the original's frames.
             entries.insert(
                 format!("{command:02X}"),
                 Entry {
                     file,
                     title,
                     volume: 1.0,
-                    loop_start: looped.map(|(start, _)| start),
-                    loop_end: looped.map(|(_, end)| end),
+                    looping: looped.is_some(),
+                    loop_start: None,
+                    loop_end: None,
                 },
             );
         }
@@ -86,6 +92,28 @@ pub fn export_template(rom: &[u8], path: &Path) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
     fs::write(path.join(MANIFEST), json + "\n").map_err(|e| e.to_string())?;
     fs::write(path.join("README.txt"), README).map_err(|e| e.to_string())
+}
+
+/// 48 kHz stereo WAV with `looped` as a `smpl` chunk's forward loop.
+pub(super) fn looping_wav(pcm: &[i16], looped: Option<(u64, u64)>) -> Result<Vec<u8>, String> {
+    const RATE: u32 = 48_000;
+    let mut bytes = wav_bytes(pcm, RATE)?;
+    let Some((start, end)) = looped else {
+        return Ok(bytes);
+    };
+    let frame = |n: u64| u32::try_from(n).map_err(|_| "loop beyond a WAV's range".to_string());
+    let (start, last) = (frame(start)?, frame(end.saturating_sub(1))?);
+    let period = 1_000_000_000 / RATE;
+    // Manufacturer, product, sample period (ns), MIDI unity note, pitch
+    // fraction, SMPTE format and offset, one loop, no sampler data; then the
+    // loop: cue id, forward type, first and last frame, fraction, endless.
+    let fields = [0, 0, period, 60, 0, 0, 0, 1, 0, 0, 0, start, last, 0, 0];
+    bytes.extend(b"smpl");
+    bytes.extend((fields.len() as u32 * 4).to_le_bytes());
+    bytes.extend(fields.iter().flat_map(|field| field.to_le_bytes()));
+    let riff = u32::try_from(bytes.len() - 8).map_err(|_| "WAV exceeds RIFF size limit")?;
+    bytes[4..8].copy_from_slice(&riff.to_le_bytes());
+    Ok(bytes)
 }
 
 /// Sound test names by driver command; the first record wins.

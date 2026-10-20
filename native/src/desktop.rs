@@ -51,6 +51,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// What loading an audio pack skipped or adjusted, for the panel status.
+fn pack_notes(pack: &AudioPack) -> String {
+    pack.notes
+        .iter()
+        .fold(String::new(), |text, note| text + note + ". ")
+}
+
 fn save_settings(path: Option<&Path>, settings: &Settings) {
     if let Some(path) = path
         && let Err(error) = settings.save(path)
@@ -122,7 +129,10 @@ pub(super) fn run(
     {
         let path = resolve_selection(&audio_pack::library_directory(), &settings.audio_pack);
         match AudioPack::load(&path) {
-            Ok(pack) => player.set_pack(Some(Arc::new(pack))),
+            Ok(pack) => {
+                audio_status = pack_notes(&pack);
+                player.set_pack(Some(Arc::new(pack)));
+            }
             Err(error) => audio_status = format!("Could not load audio: {error}"),
         }
     }
@@ -1098,10 +1108,10 @@ pub(super) fn run(
                     match action {
                         audio_packs::Action::Load(path) => match AudioPack::load(&path) {
                             Ok(pack) => {
-                                audio_status = format!("Loaded {}.", pack.name);
+                                audio_status =
+                                    format!("Loaded {}. {}", pack.name, pack_notes(&pack));
                                 if soundtrack.is_none() {
-                                    audio_status +=
-                                        " Sound is off in this mode; play mode uses it.";
+                                    audio_status += "Sound is off in this mode; play mode uses it.";
                                 }
                                 settings.audio_pack =
                                     selection_value(&audio_pack::library_directory(), &path);

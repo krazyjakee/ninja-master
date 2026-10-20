@@ -258,9 +258,13 @@ choice applies immediately and is remembered. A pack can replace as little as
 one track: everything it leaves out keeps the original sound. **Export audio
 template** renders every track, effect and voice from your ROM to WAV (about
 400 MB, in the background) with an `audio-pack.json` listing each one's
-driver command, sound-test name and detected loop points. Replace files one by
-one, adjust `loop_start`/`loop_end` (sample frames of the new file) and
-`volume`, and delete entries you do not change. Replacement music follows
+driver command and sound-test name. Replace files one by one and delete
+entries you do not change. The rendered WAVs carry the original loop points
+themselves, so a file you swap in for a looping track loops whole; give it
+its own loop points (a WAV `smpl` loop or Ogg `LOOPSTART`/`LOOPLENGTH` tags),
+or set `loop_start`/`loop_end` in its sample frames, to loop part of it.
+Loop points that do not fit a file are ignored, and a file that cannot be
+read keeps the original sound; the tab lists both. Replacement music follows
 pause dimming and fade-outs, and replacement effects keep the original
 priority and interruption rules. The original sequences keep running silently,
 so timing, saves and replays are unchanged.

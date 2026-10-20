@@ -15,7 +15,8 @@ fn constant(level: i16, seconds: u32, looped: bool) -> Clip {
         file: "constant.wav".into(),
         title: String::new(),
         volume: 1.0,
-        loop_start: looped.then_some(0),
+        looping: looped,
+        loop_start: None,
         loop_end: None,
     };
     Clip::load(wav_bytes(&pcm, 48_000).unwrap(), &entry).unwrap()
