@@ -19,6 +19,7 @@ pub mod content;
 pub mod death;
 pub mod demo;
 pub mod devtools;
+pub mod editor;
 pub mod ending;
 pub mod enemies;
 pub mod expansion;

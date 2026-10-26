@@ -384,6 +384,10 @@ impl Combat {
     pub(crate) fn art_kinds(&self) -> impl Iterator<Item = u16> + '_ {
         self.bases.keys().copied()
     }
+    /// The handler a type runs, for tools.
+    pub(crate) fn kind_label(&self, kind: u16) -> String {
+        self.roster.label(kind)
+    }
     /// Keep progression when reloading section-local spawns and art.
     pub fn inherit_progress(&mut self, previous: &Self) {
         self.view_width = previous.view_width;

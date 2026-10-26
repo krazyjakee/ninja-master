@@ -6,13 +6,13 @@
 //! stage's four palette lines; transparent pixels show what is behind it,
 //! like colour 0. The tiles load into free pattern slots and draw through
 //! the same renderer as the cartridge's art.
-use super::Source;
+use super::Files;
 use crate::{
     assets::StageAssets,
     render::{Palette, Tile},
     rom::Result,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     io::Cursor,
@@ -24,30 +24,30 @@ const MAX_SHEET_BYTES: usize = 16 * 1024 * 1024;
 /// first 128 hold the font and resident cells.
 const SLOTS: std::ops::Range<usize> = 128..0x300;
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ArtEntry {
+pub struct ArtEntry {
     /// A PNG of 16x16 cells.
-    sheet: String,
+    pub sheet: String,
     /// Layout character to cell.
-    cells: BTreeMap<String, CellEntry>,
+    pub cells: BTreeMap<String, CellEntry>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-struct CellEntry {
+pub struct CellEntry {
     /// Cell column and row in the sheet.
-    at: [usize; 2],
-    #[serde(default)]
-    collision: Collision,
+    pub at: [usize; 2],
+    #[serde(default, skip_serializing_if = "Collision::is_none")]
+    pub collision: Collision,
     /// Drawn in front of sprites (name table priority bit).
-    #[serde(default)]
-    front: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub front: bool,
 }
 
 /// What a metatile is to the player (`crate::movement::Material`).
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
-enum Collision {
+pub enum Collision {
     #[default]
     None,
     Solid,
@@ -66,7 +66,43 @@ enum Collision {
     Splash,
 }
 impl Collision {
-    fn material(self) -> u8 {
+    pub const ALL: [Self; 13] = [
+        Self::None,
+        Self::Solid,
+        Self::Platform,
+        Self::Ledge,
+        Self::HangBar,
+        Self::Spikes,
+        Self::ConveyorLeft,
+        Self::ConveyorRight,
+        Self::NoCling,
+        Self::WallLeft,
+        Self::WallRight,
+        Self::Mire,
+        Self::Splash,
+    ];
+    fn is_none(&self) -> bool {
+        *self == Self::None
+    }
+    /// The manifest's name for it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Solid => "solid",
+            Self::Ledge => "ledge",
+            Self::ConveyorRight => "conveyor-right",
+            Self::ConveyorLeft => "conveyor-left",
+            Self::Spikes => "spikes",
+            Self::HangBar => "hang-bar",
+            Self::Platform => "platform",
+            Self::NoCling => "no-cling",
+            Self::WallRight => "wall-right",
+            Self::Mire => "mire",
+            Self::WallLeft => "wall-left",
+            Self::Splash => "splash",
+        }
+    }
+    pub(crate) fn material(self) -> u8 {
         match self {
             Self::None => 0,
             Self::Solid => 1,
@@ -108,7 +144,7 @@ impl Art {
     /// characters with their numbers, for the layout.
     pub(super) fn read(
         entry: &ArtEntry,
-        source: &mut Source,
+        source: &mut dyn Files,
         legend: &BTreeMap<String, String>,
     ) -> Result<(Self, BTreeMap<String, String>)> {
         let bytes = source.read(&entry.sheet, MAX_SHEET_BYTES)?;
@@ -117,11 +153,7 @@ impl Art {
         if width % 16 != 0 || height % 16 != 0 {
             return Err(format!("{}: size must be a multiple of 16", entry.sheet));
         }
-        let taken: Vec<u8> = legend
-            .values()
-            .filter_map(|value| u8::from_str_radix(value.trim_start_matches('$'), 16).ok())
-            .collect();
-        let mut free = (1..=0xffu8).rev().filter(|id| !taken.contains(id));
+        let mut free = free_ids(legend);
         let mut cells = Vec::new();
         let mut assigned = BTreeMap::new();
         for (key, cell) in &entry.cells {
@@ -202,6 +234,16 @@ impl Art {
         }
         Ok(())
     }
+}
+
+/// The metatile numbers art cells take, in the order of their keys: the
+/// numbers `legend` leaves free, counting down from `$FF`.
+pub(crate) fn free_ids(legend: &BTreeMap<String, String>) -> impl Iterator<Item = u8> {
+    let taken: Vec<u8> = legend
+        .values()
+        .filter_map(|value| u8::from_str_radix(value.trim_start_matches('$'), 16).ok())
+        .collect();
+    (1..=0xffu8).rev().filter(move |id| !taken.contains(id))
 }
 
 /// A Mega Drive colour level (0..7) per channel.

@@ -25,7 +25,7 @@ use crate::{
     stage::{CameraBounds, Orientation, ScrollModel, Section, StageId},
     stage_objects::StageObjects,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -36,7 +36,8 @@ mod art;
 pub(crate) mod code;
 mod screen;
 pub use crate::pack::{Library, PackEntry};
-pub use art::export_template;
+pub(crate) use art::free_ids;
+pub use art::{ArtEntry, CellEntry, Collision, export_template};
 pub use screen::ExpansionScreen;
 
 pub const MANIFEST: &str = "expansion.json";
@@ -62,77 +63,100 @@ pub fn library_directory() -> PathBuf {
     crate::pack::library_directory(&KIND)
 }
 
-#[derive(Deserialize)]
+/// `expansion.json`. The editor (`crate::editor`) writes the same types
+/// back, leaving optional fields out when they are unset.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct Manifest {
-    version: u32,
+pub struct Manifest {
+    pub version: u32,
     /// Stable identity, e.g. `"bamboo-trail"`.
-    id: String,
-    name: String,
-    #[serde(default)]
-    description: String,
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// The compiled behaviour (`code::CODE`) the expansion uses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    pub rounds: Vec<RoundEntry>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RoundEntry {
     #[serde(default)]
-    code: Option<String>,
-    rounds: Vec<RoundEntry>,
+    pub name: String,
+    pub substages: Vec<SubstageEntry>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct RoundEntry {
-    #[serde(default)]
-    name: String,
-    substages: Vec<SubstageEntry>,
+pub struct SubstageEntry {
+    pub parts: Vec<PartEntry>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct SubstageEntry {
-    parts: Vec<PartEntry>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PartEntry {
+pub struct PartEntry {
     /// The original part this one is built on, `"R-S:P"`.
-    base: String,
+    pub base: String,
     /// The original part whose music plays; the base's by default.
-    #[serde(default)]
-    music: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub music: Option<String>,
     /// A text file of 32 rows, one character per metatile column, read
     /// through `legend`. Without one the base's layout is kept.
-    #[serde(default)]
-    layout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<String>,
     /// Layout character to metatile number (two hex digits).
-    #[serde(default)]
-    legend: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub legend: BTreeMap<String, String>,
     /// The player's start (feet), in pixels.
-    #[serde(default)]
-    start: Option<[i32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<[i32; 2]>,
     /// The exit's X position, in pixels.
-    #[serde(default)]
-    exit: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<i32>,
     /// The part's enemies. Without a list a part keeps its base's enemies,
     /// unless it has its own layout.
-    #[serde(default)]
-    enemies: Option<Vec<EnemyEntry>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enemies: Option<Vec<EnemyEntry>>,
     /// New metatiles for the layout, painted in the base's palettes.
-    #[serde(default)]
-    art: Option<art::ArtEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art: Option<art::ArtEntry>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-struct EnemyEntry {
+pub struct EnemyEntry {
     /// Object type in hex: a cartridge type (`$12E9A` byte offset) or one
     /// of the expansion's code's types.
-    kind: String,
-    x: i32,
-    y: i32,
+    pub kind: String,
+    pub x: i32,
+    pub y: i32,
     /// Spawn flags word, four hex digits.
-    #[serde(default)]
-    flags: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flags: Option<String>,
+}
+
+/// The files a pack's manifest names: a [`Source`], or the editor's
+/// unsaved layouts and sheets.
+pub(crate) trait Files {
+    fn read(&mut self, name: &str, max_bytes: usize) -> Result<Vec<u8>>;
+}
+impl Files for Source {
+    fn read(&mut self, name: &str, max_bytes: usize) -> Result<Vec<u8>> {
+        Source::read(self, name, max_bytes)
+    }
 }
 
 fn manifest(source: &mut Source) -> Result<Manifest> {
     let manifest: Manifest = serde_json::from_slice(&source.manifest_bytes()?)
         .map_err(|e| format!("{MANIFEST}: {e}"))?;
+    check_manifest(&manifest)?;
+    Ok(manifest)
+}
+
+/// Read a pack's manifest, checked as [`Expansion::open`] checks it.
+pub(crate) fn read_manifest(path: &Path) -> Result<Manifest> {
+    manifest(&mut Source::open(path, &KIND)?)
+}
+
+fn check_manifest(manifest: &Manifest) -> Result<()> {
     if manifest.version != 1 {
         return Err(format!(
             "unsupported expansion version {}",
@@ -150,7 +174,7 @@ fn manifest(source: &mut Source) -> Result<Manifest> {
     if manifest.name.contains('\0') {
         return Err("expansion name cannot contain a null character".into());
     }
-    Ok(manifest)
+    Ok(())
 }
 
 fn hex(value: &str, what: &str) -> Result<u16> {
@@ -207,6 +231,12 @@ impl Expansion {
     pub fn open(path: &Path) -> Result<Self> {
         let mut source = Source::open(path, &KIND)?;
         let manifest = manifest(&mut source)?;
+        Self::build(manifest, &mut source, path)
+    }
+    /// An expansion from a manifest whose files `files` supplies.
+    pub(crate) fn build(manifest: Manifest, files: &mut dyn Files, path: &Path) -> Result<Self> {
+        check_manifest(&manifest)?;
+        let source = files;
         let code = match &manifest.code {
             Some(name) => Some(
                 code::find(name).ok_or_else(|| format!("this build has no code named {name:?}"))?,
@@ -232,7 +262,7 @@ impl Expansion {
                     .into_iter()
                     .enumerate()
                     .map(|(p, part)| {
-                        Part::read(part, &mut source)
+                        Part::read(part, source)
                             .map_err(|e| format!("stage {}-{} part {p}: {e}", r + 1, s + 1))
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -277,6 +307,14 @@ impl Expansion {
         }
         Ok(())
     }
+    /// The code's enemy types: their kinds and the cartridge types whose
+    /// art they draw with.
+    pub(crate) fn code_enemies(&self, rom: &[u8]) -> Result<Vec<(u16, u16)>> {
+        Ok(match self.code {
+            Some(code) => code.enemies(rom)?.iter().map(|t| (t.kind, t.art)).collect(),
+            None => Vec::new(),
+        })
+    }
     pub fn source(self: &Arc<Self>) -> Arc<dyn StageSource> {
         Arc::new(ExpansionSource(self.clone()))
     }
@@ -295,7 +333,7 @@ impl Expansion {
 }
 
 impl Part {
-    fn read(entry: PartEntry, source: &mut Source) -> Result<Self> {
+    fn read(entry: PartEntry, source: &mut dyn Files) -> Result<Self> {
         let base = StageId::parse(&entry.base)?;
         let music = entry
             .music
@@ -389,7 +427,7 @@ impl Part {
 
 /// Parse a layout grid into column-major bytes padded to the full buffer
 /// by repeating the last column, and its width in pixels.
-fn layout(text: &str, legend: &BTreeMap<String, String>) -> Result<(Vec<u8>, i32)> {
+pub(crate) fn layout(text: &str, legend: &BTreeMap<String, String>) -> Result<(Vec<u8>, i32)> {
     let mut cells = BTreeMap::new();
     for (key, value) in legend {
         let mut chars = key.chars();

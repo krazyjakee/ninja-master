@@ -53,3 +53,8 @@ pub(crate) fn find(name: &str) -> Option<&'static dyn Code> {
         .find(|(entry, _)| *entry == name)
         .map(|&(_, code)| code)
 }
+
+/// The names a manifest's `code` can give.
+pub(crate) fn names() -> impl Iterator<Item = &'static str> {
+    CODE.iter().map(|&(name, _)| name)
+}
