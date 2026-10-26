@@ -32,6 +32,7 @@ use std::{
     sync::Arc,
 };
 
+pub(crate) mod code;
 mod screen;
 pub use crate::pack::{Library, PackEntry};
 pub use screen::ExpansionScreen;
@@ -68,6 +69,9 @@ struct Manifest {
     name: String,
     #[serde(default)]
     description: String,
+    /// The compiled behaviour (`code::CODE`) the expansion uses.
+    #[serde(default)]
+    code: Option<String>,
     rounds: Vec<RoundEntry>,
 }
 #[derive(Deserialize)]
@@ -111,7 +115,8 @@ struct PartEntry {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EnemyEntry {
-    /// Object type, two hex digits (`$12E9A` byte offset).
+    /// Object type in hex: a cartridge type (`$12E9A` byte offset) or one
+    /// of the expansion's code's types.
     kind: String,
     x: i32,
     y: i32,
@@ -170,7 +175,6 @@ struct Part {
 }
 
 /// A loaded expansion: its identity and stage catalog.
-#[derive(Debug)]
 pub struct Expansion {
     pub id: Arc<str>,
     pub name: String,
@@ -179,6 +183,16 @@ pub struct Expansion {
     round_names: Vec<String>,
     /// Rounds of substages of parts, 1-based in [`StageId`]s.
     rounds: Vec<Vec<Vec<Part>>>,
+    code: Option<&'static dyn code::Code>,
+}
+impl std::fmt::Debug for Expansion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Expansion")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("path", &self.path)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Expansion {
@@ -187,6 +201,12 @@ impl Expansion {
     pub fn open(path: &Path) -> Result<Self> {
         let mut source = Source::open(path, &KIND)?;
         let manifest = manifest(&mut source)?;
+        let code = match &manifest.code {
+            Some(name) => Some(
+                code::find(name).ok_or_else(|| format!("this build has no code named {name:?}"))?,
+            ),
+            None => None,
+        };
         if manifest.rounds.is_empty() || manifest.rounds.len() > 99 {
             return Err("an expansion needs 1 to 99 rounds".into());
         }
@@ -222,6 +242,7 @@ impl Expansion {
             path: path.to_owned(),
             round_names,
             rounds,
+            code,
         })
     }
     /// The name of round `round` (1-based), if the expansion gives one.
@@ -407,19 +428,64 @@ fn layout(text: &str, legend: &BTreeMap<String, String>) -> Result<(Vec<u8>, i32
 struct ExpansionSource(Arc<Expansion>);
 
 impl ExpansionSource {
-    /// Check a part's placements against the types its base loads art for.
-    fn placed(part: &Part, combat: &Combat, list: &[Placement]) -> Result<()> {
+    /// Spawns for a part's placements: cartridge types, or the code's types
+    /// (registered with `combat`), each only where the base loads its art.
+    fn spawns(
+        &self,
+        rom: &[u8],
+        part: &Part,
+        combat: &mut Combat,
+        list: &[Placement],
+    ) -> Result<Vec<crate::combat::Spawn>> {
+        let types = match self.0.code {
+            Some(code) => code.enemies(rom)?,
+            None => Vec::new(),
+        };
         let mut drawable: Vec<u16> = combat.art_kinds().collect();
         drawable.extend(combat.spawns.iter().map(|s| s.kind));
-        for p in list {
-            if !drawable.contains(&p.kind) {
+        let mut spawns = Vec::new();
+        for (i, p) in list.iter().enumerate() {
+            let source = SPAWN_SOURCE + i * 8;
+            let new = types.iter().find(|t| t.kind == p.kind);
+            let art = new.map_or(p.kind, |t| t.art);
+            if p.kind >= code::FIRST_KIND && new.is_none() {
                 return Err(format!(
-                    "enemy type {:02X} has no art in base {}",
-                    p.kind, part.base
+                    "enemy type {:02X} is not in the expansion's code",
+                    p.kind
                 ));
             }
+            if !drawable.contains(&art) {
+                return Err(format!(
+                    "enemy type {:02X} has no art in base {}",
+                    art, part.base
+                ));
+            }
+            spawns.push(match new {
+                Some(t) => crate::combat::Spawn {
+                    source,
+                    x: p.x,
+                    y: p.y,
+                    flags: p.flags,
+                    kind: t.kind,
+                    handler: 0,
+                    score_bcd: t.score_bcd,
+                    contact_damage: t.contact_damage,
+                    health_counter: t.health_counter,
+                    placeholder_mapping: 0,
+                },
+                None => crate::combat::spawn(rom, source, (p.x, p.y), p.flags, p.kind)?,
+            });
         }
-        Ok(())
+        for t in types {
+            if !t.kind.is_multiple_of(4) || t.kind < code::FIRST_KIND {
+                return Err(format!(
+                    "code enemy type {:X} is outside the expansion range",
+                    t.kind
+                ));
+            }
+            combat.add_enemy_type(t.kind, t.behavior);
+        }
+        Ok(spawns)
     }
 }
 
@@ -474,15 +540,18 @@ impl StageSource for ExpansionSource {
         let part = self.0.part(id)?;
         let mut combat = Cartridge.combat(rom, part.base)?;
         if let Some(list) = part.placements() {
-            Self::placed(part, &combat, list)?;
-            let spawns = list
-                .iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    crate::combat::spawn(rom, SPAWN_SOURCE + i * 8, (p.x, p.y), p.flags, p.kind)
-                })
-                .collect::<Result<Vec<_>>>()?;
+            let spawns = self.spawns(rom, part, &mut combat, list)?;
             combat.replace_spawns(spawns);
+        }
+        if let Some(boss) = self
+            .0
+            .code
+            .map(|code| code.boss(rom, id))
+            .transpose()?
+            .flatten()
+            && !combat.replace_boss(boss)
+        {
+            return Err(format!("base {} has no boss to replace", part.base));
         }
         Ok(combat)
     }

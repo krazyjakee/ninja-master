@@ -3,6 +3,7 @@
   "id": "forest-trail",
   "name": "Forest Trail",
   "description": "A sample expansion: a new path through the forest, then a rematch in the first boss's arena.",
+  "code": "forest-trail",
   "rounds": [
     {
       "name": "The Hidden Trail",
@@ -28,8 +29,10 @@
                 { "kind": "14", "x": 880, "y": 496, "flags": "0011" },
                 { "kind": "14", "x": 1180, "y": 496, "flags": "0011" },
                 { "kind": "24", "x": 1400, "y": 496 },
+                { "kind": "200", "x": 1500, "y": 496 },
                 { "kind": "14", "x": 1600, "y": 496, "flags": "0011" },
                 { "kind": "24", "x": 1880, "y": 496 },
+                { "kind": "200", "x": 2050, "y": 496 },
                 { "kind": "14", "x": 2150, "y": 496, "flags": "0011" },
                 { "kind": "14", "x": 2300, "y": 496, "flags": "0011" }
               ]

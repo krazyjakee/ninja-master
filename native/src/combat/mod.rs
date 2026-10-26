@@ -368,6 +368,18 @@ impl Combat {
             self.enemies.push(enemy);
         }
     }
+    /// Register an expansion enemy type for this part.
+    pub(crate) fn add_enemy_type(
+        &mut self,
+        kind: u16,
+        behavior: std::sync::Arc<dyn enemies::Behavior>,
+    ) {
+        self.roster.add_extension(kind, behavior);
+    }
+    /// Replace the arena boss's handler; false when the part has no boss.
+    pub(crate) fn replace_boss(&mut self, behavior: std::sync::Arc<dyn enemies::Behavior>) -> bool {
+        self.roster.replace_boss(behavior)
+    }
     /// Object types whose art the part loads (its object selection).
     pub(crate) fn art_kinds(&self) -> impl Iterator<Item = u16> + '_ {
         self.bases.keys().copied()

@@ -110,6 +110,13 @@ fn manifests_are_checked() {
     .unwrap_err();
     assert!(error.contains("stage 1-1 part 0"), "{error}");
     let error = Expansion::open(&pack(
+        "code",
+        r#"{"version": 1, "id": "c", "name": "C", "code": "nowhere", "rounds": [{"substages": [{"parts": [{"base": "1-1:0"}]}]}]}"#,
+        &[],
+    ))
+    .unwrap_err();
+    assert!(error.contains("no code named \"nowhere\""), "{error}");
+    let error = Expansion::open(&pack(
         "empty",
         r#"{"version": 1, "id": "e", "name": "E", "rounds": []}"#,
         &[],
@@ -141,7 +148,9 @@ fn the_sample_expansion_plays_its_own_layout_and_enemies() {
     let kinds: Vec<u16> = game.combat.spawns.iter().map(|s| s.kind).collect();
     assert_eq!(
         kinds,
-        [0x14, 0x24, 0x14, 0x14, 0x24, 0x14, 0x24, 0x14, 0x14]
+        [
+            0x14, 0x24, 0x14, 0x14, 0x24, 0x200, 0x14, 0x24, 0x200, 0x14, 0x14
+        ]
     );
     assert!(game.combat.spawns.iter().all(|s| s.source >= SPAWN_SOURCE));
     assert!(game.objects.objects.is_empty() && game.objects.pickups.is_empty());
@@ -233,4 +242,77 @@ fn expansion_runs_leave_no_trace_in_the_original_game() {
     until(&mut modes, "Expansions");
     assert!(!path.exists());
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+#[ignore = "requires a user-supplied cartridge"]
+fn code_types_need_the_expansions_code() {
+    let rom = cartridge();
+    let manifest = r#"{"version": 1, "id": "nocode", "name": "N", "rounds": [{"substages": [{"parts": [
+        {"base": "1-1:0", "enemies": [{"kind": "200", "x": 400, "y": 496}]}
+    ]}]}]}"#;
+    let expansion = Arc::new(Expansion::open(&pack("nocode", manifest, &[])).unwrap());
+    let error = expansion.check(&rom).unwrap_err();
+    assert!(
+        error.contains("200 is not in the expansion's code"),
+        "{error}"
+    );
+}
+
+#[test]
+#[ignore = "requires a user-supplied cartridge"]
+fn the_leaping_monk_walks_and_leaps_at_the_player() {
+    use crate::{input::Input, modes::Mode};
+    let rom = cartridge();
+    let expansion = Arc::new(Expansion::open(&sample()).unwrap());
+    let mut game = Game::load_from(&rom, expansion.source(), StageId::FOREST).unwrap();
+    game.options.invincible = true;
+    // Stand on the ground left of the first monk (x 1500).
+    game.player.x = 1380 * 256;
+    game.player.camera_x = 1260;
+    let monk = game
+        .combat
+        .spawns
+        .iter()
+        .position(|s| s.kind == code::FIRST_KIND)
+        .unwrap();
+    let (mut lowest, mut leftmost, mut seen) = (i32::MAX, i32::MAX, false);
+    for _ in 0..240 {
+        Mode::tick(&mut game, Input::default());
+        let enemy = game
+            .combat
+            .enemies
+            .iter()
+            .find(|e| e.spawn == monk)
+            .unwrap();
+        if enemy.live() && enemy.state != crate::combat::EnemyState::Dormant {
+            seen = true;
+            lowest = lowest.min(enemy.y);
+            leftmost = leftmost.min(enemy.x);
+            assert!(enemy.mapping != 0);
+        }
+    }
+    assert!(seen, "the monk activated");
+    assert!(leftmost < 1500 - 32, "walked toward the player: {leftmost}");
+    assert!(lowest < 496 - 32, "leapt: {lowest}");
+}
+
+#[test]
+#[ignore = "requires a user-supplied cartridge"]
+fn code_bosses_replace_only_an_arenas_boss() {
+    let rom = cartridge();
+    let monk = || {
+        code::find("forest-trail")
+            .unwrap()
+            .enemies(&rom)
+            .unwrap()
+            .remove(0)
+            .behavior
+    };
+    let mut arena = Cartridge.combat(&rom, StageId::new(1, 3, 0)).unwrap();
+    assert!(!arena.report().contains("Forest Trail leaping monk"));
+    assert!(arena.replace_boss(monk()));
+    assert!(arena.report().contains("Forest Trail leaping monk"));
+    let mut path = Cartridge.combat(&rom, StageId::FOREST).unwrap();
+    assert!(!path.replace_boss(monk()));
 }

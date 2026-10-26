@@ -224,12 +224,15 @@ pub(crate) trait Behavior: Send + Sync {
 pub(crate) struct Roster {
     types: Vec<Option<Arc<dyn Behavior>>>,
     boss: Option<Arc<dyn Behavior>>,
+    /// Expansion types (`crate::expansion::code::FIRST_KIND` and up).
+    extensions: BTreeMap<u16, Arc<dyn Behavior>>,
 }
 impl Roster {
     pub(crate) fn load(rom: &[u8], stage: crate::stage::StageId) -> Result<Self> {
         let mut roster = Self {
             types: vec![None; 64],
             boss: None,
+            extensions: BTreeMap::new(),
         };
         forest::register(rom, &mut roster)?;
         round2::register(rom, &mut roster)?;
@@ -251,9 +254,21 @@ impl Roster {
             *slot = Some(behavior);
         }
     }
+    /// Register an expansion type's behavior.
+    pub(crate) fn add_extension(&mut self, kind: u16, behavior: Arc<dyn Behavior>) {
+        debug_assert!(kind >= crate::expansion::code::FIRST_KIND);
+        self.extensions.insert(kind, behavior);
+    }
+    /// Replace the arena boss's handler; false without a boss.
+    pub(crate) fn replace_boss(&mut self, behavior: Arc<dyn Behavior>) -> bool {
+        self.boss.replace(behavior).is_some()
+    }
     pub(crate) fn get(&self, kind: u16) -> Option<&dyn Behavior> {
         if kind == crate::bosses::BOSS_KIND {
             return self.boss.as_deref();
+        }
+        if kind >= crate::expansion::code::FIRST_KIND {
+            return self.extensions.get(&kind).map(|behavior| &**behavior);
         }
         if !kind.is_multiple_of(4) {
             return None;
