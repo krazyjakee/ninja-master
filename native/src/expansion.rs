@@ -32,9 +32,11 @@ use std::{
     sync::Arc,
 };
 
+mod art;
 pub(crate) mod code;
 mod screen;
 pub use crate::pack::{Library, PackEntry};
+pub use art::export_template;
 pub use screen::ExpansionScreen;
 
 pub const MANIFEST: &str = "expansion.json";
@@ -111,6 +113,9 @@ struct PartEntry {
     /// unless it has its own layout.
     #[serde(default)]
     enemies: Option<Vec<EnemyEntry>>,
+    /// New metatiles for the layout, painted in the base's palettes.
+    #[serde(default)]
+    art: Option<art::ArtEntry>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -169,6 +174,7 @@ struct Part {
     /// Column-major layout bytes, padded to the full buffer, and the
     /// authored width in pixels.
     layout: Option<(Vec<u8>, i32)>,
+    art: Option<art::Art>,
     start: Option<(i32, i32)>,
     exit: Option<i32>,
     enemies: Option<Vec<Placement>>,
@@ -297,11 +303,21 @@ impl Part {
             .map(StageId::parse)
             .transpose()?
             .unwrap_or(base);
+        let mut legend = entry.legend.clone();
+        let art = match (&entry.art, &entry.layout) {
+            (Some(art), Some(_)) => {
+                let (art, cells) = art::Art::read(art, source, &entry.legend)?;
+                legend.extend(cells);
+                Some(art)
+            }
+            (Some(_), None) => return Err("art needs a layout".into()),
+            (None, _) => None,
+        };
         let layout = match &entry.layout {
             Some(name) => {
                 let text = source.read(name, MAX_LAYOUT_BYTES)?;
                 let text = String::from_utf8(text).map_err(|_| format!("{name}: not UTF-8"))?;
-                Some(layout(&text, &entry.legend).map_err(|e| format!("{name}: {e}"))?)
+                Some(layout(&text, &legend).map_err(|e| format!("{name}: {e}"))?)
             }
             None if !entry.legend.is_empty() => {
                 return Err("a legend needs a layout".into());
@@ -333,6 +349,7 @@ impl Part {
             base,
             music,
             layout,
+            art,
             start: entry.start.map(|[x, y]| (x, y)),
             exit: entry.exit,
             enemies,
@@ -533,6 +550,10 @@ impl StageSource for ExpansionSource {
             assets.data.spawns.clear();
             // Overlays are drawn at fixed places in the base's layout.
             assets.data.plane_a_overlay = None;
+        }
+        if let Some(art) = &part.art {
+            art.apply(&mut assets)
+                .map_err(|e| format!("{}: {e}", self.0.name))?;
         }
         Ok(assets)
     }

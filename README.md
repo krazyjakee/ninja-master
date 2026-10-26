@@ -196,7 +196,8 @@ and can't be saved to the manual save slots.
 Packs contain no original game content. Each stage is built on an original
 stage part, which supplies the art, music, enemy types and any boss from your
 own ROM. A stage can replace that part's layout with its own metatile grid,
-place its own enemies, and move the start and exit.
+add new metatiles painted in the base stage's palettes, place its own
+enemies, and move the start and exit.
 [native/sample-expansions](native/sample-expansions/README.md) has a sample
 pack and the format reference.
 

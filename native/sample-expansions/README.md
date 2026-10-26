@@ -6,8 +6,13 @@ the executable to play it from **EXPANSIONS** on the main menu. The
 When running from a source checkout, the folder is `expansions/` at the
 repository root.
 
-`forest-trail` is a sample: a new path through the forest on round 1's art,
-with a new enemy (the leaping monk), then a rematch in the first boss's arena.
+Two samples:
+
+- `forest-trail`: a new path through the forest on round 1's art, with a new
+  enemy (the leaping monk), then a rematch in the first boss's arena.
+- `hangar-run`: a short warehouse run built from round 2-2's walkways, supports
+  and pillars, with new art of its own: cargo crates to climb and hazard
+  signs. `generate.py` builds its layout and `paint.py` paints its sheet.
 
 ## `expansion.json`
 
@@ -53,9 +58,58 @@ The other fields of a part are optional:
 | `exit` | The exit's x position in pixels. Reaching it enters the next part, or the next substage after the last part. |
 | `enemies` | The part's enemies: `{"kind": "14", "x": 400, "y": 496, "flags": "0011"}`. `kind` is an original object type in hex, or one of the expansion's code's types. Its art must be loaded by the base part. `flags` is the spawn flags word. Without a list, a part keeps its base's enemies, unless it has its own layout. |
 | `music` | The original part (`"R-S:P"`) whose music plays instead of the base's. |
+| `art` | New metatiles for the layout, painted on a PNG sheet. See [Art](#art). |
 
 Consecutive parts hand the player over like their base parts do. For a part
 built on a different base, a substage of its own is usually simpler.
+
+## Art
+
+A part with its own layout can add metatiles painted on a PNG sheet of 16x16
+cells:
+
+```json
+"art": {
+  "sheet": "art.png",
+  "cells": {
+    "<": { "at": [0, 0], "collision": "solid" },
+    "[": { "at": [2, 0] },
+    "~": { "at": [3, 0], "collision": "platform", "front": true }
+  }
+}
+```
+
+Each key is a layout character, used like a legend entry; `at` is the
+cell's column and row in the sheet. Cells take metatile numbers the
+legend leaves free.
+
+The art must follow the Mega Drive's rules, which keeps it at home beside the
+original art:
+
+- Each 8x8 quarter of a cell may only use colours from one of the base
+  stage's four palette lines (16 colours each, shared with sprites).
+  Transparent pixels show the background, like the cartridge's colour 0.
+- Pick colours from the template's `palettes.png`; nearby values are snapped
+  to the Mega Drive's 8 levels per channel.
+- New tiles fill the base's free pattern slots: roughly 190 to 330 tiles,
+  depending on the stage. Identical 8x8 tiles are stored once.
+
+`collision` is one of `none` (the default), `solid`, `platform` (one-way
+floor), `ledge` (one-way floor that can be hung from), `hang-bar`, `spikes`,
+`conveyor-left`, `conveyor-right`, `no-cling`, `wall-left`, `wall-right`,
+`mire` or `splash`. `front` draws the cell in front of sprites.
+
+To start, export a template for the base part from your ROM:
+
+```sh
+ninja-master-native --expansion-template 2-2:0 my-art [--rom FILE]
+```
+
+It writes `palettes.png` (the base's palette lines, one row per line,
+colour 0 left blank), a blank `art.png` sheet, and `metatiles.png` with
+`metatiles.txt`: every metatile the base uses and its number, for the
+legend. The template comes from your cartridge; keep it out of packs you
+share.
 
 ## Code
 

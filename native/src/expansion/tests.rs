@@ -86,8 +86,8 @@ fn the_sample_expansion_opens() {
     assert_eq!(expansion.round_name(1), Some("The Hidden Trail"));
     let library = Library::new(sample().parent().unwrap().to_owned(), &KIND);
     assert!(library.errors.is_empty(), "{:?}", library.errors);
-    assert_eq!(library.packs.len(), 1);
-    assert_eq!(library.packs[0].name, "Forest Trail");
+    let names: Vec<&str> = library.packs.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["Forest Trail", "Hangar Run"]);
 }
 
 #[test]
@@ -315,4 +315,98 @@ fn code_bosses_replace_only_an_arenas_boss() {
     assert!(arena.report().contains("Forest Trail leaping monk"));
     let mut path = Cartridge.combat(&rom, StageId::FOREST).unwrap();
     assert!(!path.replace_boss(monk()));
+}
+
+/// A 2-2 part whose layout is ground (`=`) under one new solid cell (`C`)
+/// painted in palette line 3's colour 4, with a second, transparent cell.
+fn art_pack(rom: &[u8], name: &str, sheet: (usize, usize)) -> PathBuf {
+    let base = Cartridge.stage_assets(rom, StageId::new(2, 2, 0)).unwrap();
+    let colour = base.palettes[3][4];
+    let (width, height) = sheet;
+    let mut rgba = vec![0u8; width * height * 4];
+    for y in 0..16.min(height) {
+        for x in 0..16.min(width) {
+            rgba[(y * width + x) * 4..][..4]
+                .copy_from_slice(&[colour[0], colour[1], colour[2], 255]);
+        }
+    }
+    let mut rows = vec![".".repeat(24); LAYOUT_ROWS - 2];
+    rows.push(format!("..C{}", ".".repeat(21)));
+    rows.push("=".repeat(24));
+    let manifest = r#"{"version": 1, "id": "art", "name": "Art", "rounds": [{"substages": [{"parts": [
+        {"base": "2-2:0", "layout": "grid.txt", "legend": {".": "00", "=": "3C"},
+         "art": {"sheet": "art.png", "cells": {"C": {"at": [0, 0], "collision": "solid"}, "T": {"at": [1, 0]}}}}
+    ]}]}]}"#;
+    let dir = pack(name, manifest, &[("grid.txt", &(rows.join("\n") + "\n"))]);
+    crate::art_pack::write_png(&dir.join("art.png"), width, height, &rgba).unwrap();
+    dir
+}
+
+#[test]
+#[ignore = "requires a user-supplied cartridge"]
+fn parts_draw_new_art_in_the_bases_palettes() {
+    let rom = cartridge();
+    let expansion = Arc::new(Expansion::open(&art_pack(&rom, "art-ok", (32, 16))).unwrap());
+    expansion.check(&rom).unwrap();
+    let assets = expansion
+        .source()
+        .stage_assets(&rom, StageId::FOREST)
+        .unwrap();
+    // The cell takes the highest number the legend leaves free.
+    let id = assets.data.metatile_at(2, 30).unwrap();
+    assert_eq!(id, 0xff);
+    assert!(crate::game::Terrain::solid_at(
+        &assets,
+        2 * 16 + 8,
+        30 * 16 + 8
+    ));
+    assert!(!crate::game::Terrain::solid_at(
+        &assets,
+        3 * 16 + 8,
+        30 * 16 + 8
+    ));
+    // One pattern serves all four quarters, on line 3, colour 4.
+    let attrs = assets.data.metatiles[usize::from(id)];
+    assert!(attrs.iter().all(|&attr| attr == attrs[0]));
+    assert_eq!(attrs[0] >> 13 & 3, 3);
+    let slot = usize::from(attrs[0] & 0x7ff);
+    assert!((128..0x300).contains(&slot));
+    assert_eq!(assets.tiles[slot].0, [0x44; 32]);
+    assert_eq!(assets.data.tiles[slot].0, [0x44; 32]);
+}
+
+#[test]
+#[ignore = "requires a user-supplied cartridge"]
+fn art_sheets_are_checked() {
+    let rom = cartridge();
+    let error = Expansion::open(&art_pack(&rom, "art-size", (24, 16))).unwrap_err();
+    assert!(error.contains("multiple of 16"), "{error}");
+    let error = Expansion::open(&art_pack(&rom, "art-cell", (16, 16))).unwrap_err();
+    assert!(error.contains("cell 1,0 is outside the sheet"), "{error}");
+    // A colour from no palette line fails as the part loads.
+    let dir = art_pack(&rom, "art-colour", (32, 16));
+    let mut rgba = vec![0u8; 32 * 16 * 4];
+    rgba[..4].copy_from_slice(&[0x12, 0xF0, 0x34, 255]);
+    crate::art_pack::write_png(&dir.join("art.png"), 32, 16, &rgba).unwrap();
+    let error = Arc::new(Expansion::open(&dir).unwrap())
+        .check(&rom)
+        .unwrap_err();
+    assert!(error.contains("art cell 0,0 quarter 0"), "{error}");
+}
+
+#[test]
+#[ignore = "requires a user-supplied cartridge"]
+fn the_hangar_run_sample_plays() {
+    let rom = cartridge();
+    let path = sample().parent().unwrap().join("hangar-run");
+    let expansion = Arc::new(Expansion::open(&path).unwrap());
+    expansion.check(&rom).unwrap();
+    let game = Game::load_from(&rom, expansion.source(), StageId::FOREST).unwrap();
+    assert_eq!(game.rules().routines, StageId::new(2, 2, 0));
+    // The first crate stands on the start walkway, solid.
+    assert!(crate::game::Terrain::solid_at(
+        game.assets(),
+        12 * 16 + 8,
+        28 * 16 + 8
+    ));
 }

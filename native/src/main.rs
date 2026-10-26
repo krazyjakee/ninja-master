@@ -27,6 +27,8 @@ const TICK_SAMPLES: usize = 48_000 / 60 * 2;
 #[derive(Default)]
 struct Options {
     render_benchmark: Option<PathBuf>,
+    /// `--expansion-template R-S:P DIR`.
+    expansion_template: Option<(ninja_master_native::stage::StageId, PathBuf)>,
     input_script: Option<PathBuf>,
     trace: Option<PathBuf>,
     sound: bool,
@@ -123,6 +125,18 @@ fn run() -> Result<(), String> {
                         .ok_or("--render-benchmark needs an output directory")?
                         .into(),
                 );
+            }
+            "--expansion-template" => {
+                let stage = args
+                    .next()
+                    .ok_or("--expansion-template needs a stage (R-S:P) and a directory")?;
+                let directory = args
+                    .next()
+                    .ok_or("--expansion-template needs a stage (R-S:P) and a directory")?;
+                options.expansion_template = Some((
+                    ninja_master_native::stage::StageId::parse(&stage)?,
+                    directory.into(),
+                ));
             }
             "--input-script" => {
                 options.input_script =
@@ -240,6 +254,7 @@ fn run() -> Result<(), String> {
                     With no mode flag, the desktop build boots the whole game (--boot); headless runs and --round/--substage/--part start play directly (--play).\n\
                     Full game: --boot [--rom FILE] (SEGA logo, story, title, options, attract demo, game, game over/continue, ending)\n\
                     Engine demo: --demo (synthetic test scene)\n\
+                    Expansion art template: --expansion-template R-S:P DIR [--rom FILE] (palettes, a blank sheet and the stage's numbered metatiles)\n\
                     Rendering benchmark: --render-benchmark DIR [--frames N] [--rom FILE] (desktop GPU required; procedural fixtures need no ROM)\n\
                     Direct play: --play [--round R --substage S [--part P]] [--rom FILE] [--asset-report FILE] [--scripted] (move, run, jump, attack, ninjutsu, pause)\n\
                     Play continues through substage and round transitions (1-1 -> 1-2 ...), with ROUND CLEAR and the round card between rounds.\n\
@@ -278,6 +293,13 @@ fn run() -> Result<(), String> {
             let _ = directory;
             return Err("Rendering benchmarks require the desktop feature".into());
         }
+    }
+    if let Some((stage, directory)) = &options.expansion_template {
+        let rom = rom_source::read(&rom_source::resolve(options.rom.as_deref()))?;
+        let assets = StageAssets::load_stage(&rom, *stage)?;
+        ninja_master_native::expansion::export_template(&assets, directory)?;
+        println!("Wrote the {stage} art template to {}", directory.display());
+        return Ok(());
     }
     let stage_flags = options.part != 0 || options.round.is_some() || options.substage.is_some();
     let modes = [

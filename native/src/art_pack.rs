@@ -261,7 +261,7 @@ fn read_png(path: &Path) -> Result<(usize, usize, Vec<[u8; 4]>), String> {
     ))
 }
 
-fn decode_png(
+pub(crate) fn decode_png(
     reader: impl BufRead + std::io::Seek,
 ) -> Result<(usize, usize, Vec<[u8; 4]>), String> {
     let mut decoder = png::Decoder::new_with_limits(
@@ -297,7 +297,12 @@ fn decode_png(
     Ok((width, height, pixels))
 }
 
-fn write_png(path: &Path, width: usize, height: usize, pixels: &[u8]) -> Result<(), String> {
+pub(crate) fn write_png(
+    path: &Path,
+    width: usize,
+    height: usize,
+    pixels: &[u8],
+) -> Result<(), String> {
     let file = fs::File::create(path).map_err(|e| e.to_string())?;
     let mut encoder = png::Encoder::new(file, width as u32, height as u32);
     encoder.set_color(png::ColorType::Rgba);
