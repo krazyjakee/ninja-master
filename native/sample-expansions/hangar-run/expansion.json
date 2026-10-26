@@ -2,7 +2,7 @@
   "version": 1,
   "id": "hangar-run",
   "name": "Hangar Run",
-  "description": "Practice map: a short run through a round 2 warehouse, with new crates and signs.",
+  "description": "Practice map: a short run through a round 2 warehouse, with new crates, signs and props.",
   "rounds": [
     {
       "name": "Hangar Run",
@@ -85,7 +85,7 @@
                 },
                 {
                   "kind": "04",
-                  "x": 1250,
+                  "x": 1330,
                   "y": 480
                 },
                 {
@@ -140,6 +140,80 @@
                     "at": [
                       3,
                       0
+                    ]
+                  },
+                  "^": {
+                    "at": [
+                      4,
+                      0
+                    ],
+                    "collision": "solid"
+                  },
+                  "_": {
+                    "at": [
+                      4,
+                      1
+                    ],
+                    "collision": "solid"
+                  },
+                  "!": {
+                    "at": [
+                      5,
+                      0
+                    ]
+                  },
+                  "|": {
+                    "at": [
+                      5,
+                      1
+                    ]
+                  },
+                  "@": {
+                    "at": [
+                      6,
+                      0
+                    ]
+                  },
+                  "$": {
+                    "at": [
+                      7,
+                      0
+                    ]
+                  },
+                  "%": {
+                    "at": [
+                      6,
+                      1
+                    ]
+                  },
+                  "&": {
+                    "at": [
+                      7,
+                      1
+                    ]
+                  },
+                  "(": {
+                    "at": [
+                      8,
+                      0
+                    ]
+                  },
+                  ")": {
+                    "at": [
+                      9,
+                      0
+                    ]
+                  },
+                  ";": {
+                    "at": [
+                      8,
+                      1
+                    ]
+                  },
+                  ":": {
+                    "at": [
+                      9,
+                      1
                     ]
                   }
                 }

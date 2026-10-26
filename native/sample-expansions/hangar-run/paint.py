@@ -1,6 +1,8 @@
 """Paint Hangar Run's new pieces in 2-2's palette line 3.
 
-Run: python3 paint.py art.png preview.png (needs Pillow).
+Run: python3 paint_props.py, then python3 paint.py art.png preview.png
+(needs Pillow). The crate and sign are painted here; props.png (the oil
+drum, lamp, vent and control panel) goes to their right.
 """
 from PIL import Image
 import sys
@@ -10,7 +12,7 @@ C = {  # palette line 3
     'L': (0x91, 0x91, 0x6d), 'M': (0x6d, 0x6d, 0x48), 'D': (0x48, 0x48, 0x24), 'g': (0x91, 0x91, 0x91),
     'G': (0xda, 0xda, 0xda), 'y': (0xb6, 0xb6, 0x00), 'Y': (0x6d, 0x6d, 0x00), 'r': (0x91, 0x48, 0x00),
 }
-sheet = Image.new('RGBA', (64, 32), (0, 0, 0, 0))
+sheet = Image.new('RGBA', (160, 32), (0, 0, 0, 0))
 
 def px(x, y, c):
     sheet.putpixel((x, y), C[c] + (255,))
@@ -70,5 +72,6 @@ for y in (5, 6, 7, 8):  # the warning mark
     px(32 + 15, y, 'o'); px(32 + 16, y, 'r')
 px(32 + 15, 10, 'o'); px(32 + 16, 10, 'r')
 
+sheet.paste(Image.open('props.png').convert('RGBA'), (64, 0))
 sheet.save(sys.argv[1])
-sheet.resize((256, 128), Image.NEAREST).save(sys.argv[2])
+sheet.resize((640, 128), Image.NEAREST).save(sys.argv[2])

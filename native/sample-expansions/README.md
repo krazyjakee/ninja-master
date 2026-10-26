@@ -11,8 +11,11 @@ Two samples:
 - `forest-trail`: a new path through the forest on round 1's art, with a new
   enemy (the leaping monk), then a rematch in the first boss's arena.
 - `hangar-run`: a short warehouse run built from round 2-2's walkways, supports
-  and pillars, with new art of its own: cargo crates to climb and hazard
-  signs. `generate.py` builds its layout and `paint.py` paints its sheet.
+  and pillars, with new art of its own: cargo crates and oil drums to climb,
+  hazard signs, hanging lamps, wall vents and control panels. `generate.py`
+  builds its layout. `paint.py` paints the crate and sign and adds
+  `props.png`, the props Codex CLI drew from a written brief with
+  `paint_props.py`.
 
 ## `expansion.json`
 

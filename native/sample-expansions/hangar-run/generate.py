@@ -105,6 +105,18 @@ crate(78, 30, high=2)
 art(23, 3, ['[]'])
 art(20, 62, ['[]'])
 art(23, 96, ['[]'])
+# Props drawn by Codex CLI: oil drums to hop, lamps over the pits, vents
+# and control panels on the walls.
+art(28, 6, ['^', '_'])
+art(27, 38, ['^', '_'])
+art(28, 73, ['^', '_'])
+art(19, 28, ['!', '|'])
+art(19, 64, ['!', '|'])
+art(19, 97, ['!', '|'])
+art(21, 16, ['@$', '%&'])
+art(21, 82, ['@$', '%&'])
+art(24, 46, ['()', ';:'])
+art(22, 108, ['()', ';:'])
 
 chars = {}
 pool = iter('.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#=+*')
