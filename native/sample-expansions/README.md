@@ -17,6 +17,33 @@ Two samples:
   `props.png`, the props Codex CLI drew from a written brief with
   `paint_props.py`.
 
+## The editor
+
+`ninja-master-native --editor [PACK]` opens a pack folder in the expansion
+editor, or starts a new pack. It writes the format below, so packs can still
+be edited by hand. Opening a pack and saving it changes only the manifest's
+formatting.
+
+- **Pack** (left): the pack's id, name, description and code, and its rounds,
+  stages and parts. Select a part to edit it. Add, remove and reorder parts,
+  stages and rounds here.
+- **Part** (right): the base and music, the layout's width, the tools, the
+  metatile palette, the start and exit, the enemy list and the art cells.
+- **Stage** (middle): the part as the game draws it. **G** toggles the grid,
+  **C** the collision colours, **B** the background. Middle-drag or use the
+  arrows to pan, the wheel to scroll, and Ctrl+wheel to zoom.
+
+The tools are **Paint** (1) and **Rectangle** (2) for the layout, where the
+right button picks up the metatile under it. **Enemies** (3) places and drags
+enemies, and the right button deletes them. **Start** (4) and **Exit** (5)
+move the start and exit. Ctrl+Z and Ctrl+Y undo and redo, and Ctrl+S saves.
+
+**Pack > Check for problems** loads every part as the game would and lists
+what stops one from loading. **F5** playtests the selected part in a separate
+game window, and **F6** playtests from the start. Both use unsaved changes.
+The editor picks legend characters for you. A new layout starts blank: the
+editor never copies the base's layout into a pack.
+
 ## `expansion.json`
 
 ```json

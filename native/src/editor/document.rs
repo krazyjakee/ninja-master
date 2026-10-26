@@ -774,6 +774,24 @@ impl Document {
             crate::art_pack::decode_png(std::io::Cursor::new(self.sheet(&art.sheet)?)).ok()?;
         Some((width / 16, height / 16))
     }
+    /// `at`'s art sheet as RGB24 over a checkerboard, and its size.
+    pub fn sheet_rgb(&self, at: PartRef) -> Option<(usize, usize, Vec<u8>)> {
+        let art = self.part(at)?.art.as_ref()?;
+        let (width, height, pixels) =
+            crate::art_pack::decode_png(std::io::Cursor::new(self.sheet(&art.sheet)?)).ok()?;
+        let mut rgb = Vec::with_capacity(width * height * 3);
+        for (i, p) in pixels.iter().enumerate() {
+            let (x, y) = (i % width, i / width);
+            let back: u16 = if (x / 4 + y / 4) % 2 == 0 { 44 } else { 30 };
+            let alpha = u16::from(p[3]);
+            rgb.extend(
+                p[..3]
+                    .iter()
+                    .map(|&c| ((u16::from(c) * alpha + back * (255 - alpha)) / 255) as u8),
+            );
+        }
+        Some((width, height, rgb))
+    }
     /// Make sheet cell `cell` a metatile of `at`; returns its character.
     pub fn add_art_cell(&mut self, at: PartRef, cell: [usize; 2]) -> Option<char> {
         let part = self.part(at)?;

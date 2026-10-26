@@ -383,6 +383,14 @@ pub fn material_color(material: u8) -> Option<[u8; 3]> {
     })
 }
 
+/// A collision material's manifest name.
+pub fn material_name(material: u8) -> &'static str {
+    crate::expansion::Collision::ALL
+        .iter()
+        .find(|c| c.material() == material)
+        .map_or("other", |c| c.name())
+}
+
 /// An RGB24 picture of the world from `origin`.
 struct Canvas {
     width: usize,

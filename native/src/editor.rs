@@ -20,7 +20,7 @@ mod document;
 mod preview;
 pub use crate::expansion::Collision;
 pub use document::{Document, Grid, MIN_COLUMNS, NEW_COLUMNS, stage_text};
-pub use preview::{Highlight, Kind, Marker, Overlays, Preview, material_color};
+pub use preview::{Highlight, Kind, Marker, Overlays, Preview, material_color, material_name};
 
 /// A part of the pack: indices into its rounds, substages and parts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -126,6 +126,16 @@ impl Editor {
     pub fn rom(&self) -> &[u8] {
         &self.rom
     }
+    /// Edit another pack.
+    pub fn replace_document(&mut self, document: Document) {
+        self.cancel_drag();
+        self.document = document;
+        self.selected = PartRef::default();
+        self.selected_enemy = None;
+        self.shown = None;
+        self.preview = None;
+        self.refresh();
+    }
 
     /// Rebuild the preview after the document or selection changed.
     pub fn refresh(&mut self) {
@@ -195,7 +205,8 @@ impl Editor {
                 .render(origin, size, overlays, &highlight),
         )
     }
-    fn highlight(&self) -> Highlight {
+    /// What the next [`Editor::render`] marks.
+    pub fn highlight(&self) -> Highlight {
         let cells = match (self.drag, self.tool, self.hover) {
             (Some(Drag::Rectangle(a, b)), _, _) => Some((a, b)),
             (_, Tool::Paint | Tool::Rectangle, Some(point)) => {
@@ -372,6 +383,22 @@ impl Editor {
         self.document.export(dir)?;
         Arc::new(Expansion::open(dir)?).check(&self.rom)
     }
+}
+
+/// Every original part, which parts can be built on.
+pub fn bases(rom: &[u8]) -> Vec<StageId> {
+    let mut list = Vec::new();
+    for round in 1..=7u8 {
+        for substage in 1..=3u8 {
+            let Ok(sections) =
+                crate::stage::sections(rom, round as usize - 1, substage as usize - 1)
+            else {
+                continue;
+            };
+            list.extend((0..sections.len()).map(|p| StageId::new(round, substage, p as u8)));
+        }
+    }
+    list
 }
 
 /// The code names a pack can choose.

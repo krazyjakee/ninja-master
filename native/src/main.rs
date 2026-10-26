@@ -29,6 +29,10 @@ struct Options {
     render_benchmark: Option<PathBuf>,
     /// `--expansion-template R-S:P DIR`.
     expansion_template: Option<(ninja_master_native::stage::StageId, PathBuf)>,
+    /// `--editor [PACK]`: the expansion editor, opening `PACK` if given.
+    editor: Option<Option<PathBuf>>,
+    /// `--expansion PACK`: play an expansion pack directly.
+    expansion: Option<PathBuf>,
     input_script: Option<PathBuf>,
     trace: Option<PathBuf>,
     sound: bool,
@@ -116,7 +120,7 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let mut options = Options::default();
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args().skip(1).peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--render-benchmark" => {
@@ -137,6 +141,12 @@ fn run() -> Result<(), String> {
                     ninja_master_native::stage::StageId::parse(&stage)?,
                     directory.into(),
                 ));
+            }
+            "--editor" => {
+                options.editor = Some(args.next_if(|a| !a.starts_with("--")).map(PathBuf::from))
+            }
+            "--expansion" => {
+                options.expansion = Some(args.next().ok_or("--expansion needs a pack")?.into())
             }
             "--input-script" => {
                 options.input_script =
@@ -255,6 +265,8 @@ fn run() -> Result<(), String> {
                     Full game: --boot [--rom FILE] (SEGA logo, story, title, options, attract demo, game, game over/continue, ending)\n\
                     Engine demo: --demo (synthetic test scene)\n\
                     Expansion art template: --expansion-template R-S:P DIR [--rom FILE] (palettes, a blank sheet and the stage's numbered metatiles)\n\
+                    Expansion editor: --editor [PACK] [--rom FILE] (desktop; opens a pack folder or starts a new one)\n\
+                    Play an expansion: --play --expansion PACK [--round R --substage S [--part P]] (stages count from 1-1 within the pack)\n\
                     Rendering benchmark: --render-benchmark DIR [--frames N] [--rom FILE] (desktop GPU required; procedural fixtures need no ROM)\n\
                     Direct play: --play [--round R --substage S [--part P]] [--rom FILE] [--asset-report FILE] [--scripted] (move, run, jump, attack, ninjutsu, pause)\n\
                     Play continues through substage and round transitions (1-1 -> 1-2 ...), with ROUND CLEAR and the round card between rounds.\n\
@@ -301,6 +313,28 @@ fn run() -> Result<(), String> {
         println!("Wrote the {stage} art template to {}", directory.display());
         return Ok(());
     }
+    if let Some(pack) = &options.editor {
+        if options.headless {
+            return Err("the expansion editor needs a desktop display".into());
+        }
+        #[cfg(feature = "desktop")]
+        {
+            let path = rom_source::resolve(options.rom.as_deref());
+            let rom = match rom_source::read(&path) {
+                Ok(rom) => rom,
+                Err(error) => match desktop::pick_rom(&path, &error)? {
+                    Some(rom) => rom,
+                    None => return Ok(()),
+                },
+            };
+            return desktop::editor(rom, pack.as_deref(), options.rom.as_deref());
+        }
+        #[cfg(not(feature = "desktop"))]
+        {
+            let _ = pack;
+            return Err("the expansion editor requires the desktop feature".into());
+        }
+    }
     let stage_flags = options.part != 0 || options.round.is_some() || options.substage.is_some();
     let modes = [
         options.assets,
@@ -322,6 +356,9 @@ fn run() -> Result<(), String> {
         0 => options.play = true,
         1 => {}
         _ => return Err("--assets, --play, --boot, --sound and --demo are separate modes".into()),
+    }
+    if options.expansion.is_some() && (!options.play || options.boot) {
+        return Err("--expansion requires --play".into());
     }
     if options.boot {
         if stage_flags {
@@ -453,8 +490,19 @@ fn run() -> Result<(), String> {
         }
         Scene::Assets(Box::new(viewer))
     } else if options.play {
+        let source = match &options.expansion {
+            Some(path) => {
+                let expansion = std::sync::Arc::new(
+                    ninja_master_native::expansion::Expansion::open(path)
+                        .map_err(|e| format!("{}: {e}", path.display()))?,
+                );
+                expansion.check(&rom)?;
+                expansion.source()
+            }
+            None => ninja_master_native::content::Cartridge::source(),
+        };
         let mut game = (!options.boot || options.asset_report.is_some())
-            .then(|| Game::load_stage(&rom, stage))
+            .then(|| Game::load_from(&rom, source, stage))
             .transpose()?;
         if let (Some(path), Some(game)) = (&options.asset_report, &game) {
             let report = game.report() + &SoundAssets::load(&rom)?.report();

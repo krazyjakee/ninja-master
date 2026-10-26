@@ -76,7 +76,7 @@ fn painting_takes_legend_characters_and_undoes_by_stroke() {
     assert_eq!(doc.grid(FIRST).unwrap().get(1, 31), Some('='));
     assert!(doc.undo());
     assert_eq!(doc.grid(FIRST).unwrap().get(1, 31), Some('.'));
-    assert!(doc.part(FIRST).unwrap().legend.get("=").is_none());
+    assert!(!doc.part(FIRST).unwrap().legend.contains_key("="));
     assert!(doc.redo());
     assert_eq!(doc.grid(FIRST).unwrap().get(1, 31), Some('='));
 

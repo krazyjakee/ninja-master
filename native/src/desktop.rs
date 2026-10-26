@@ -3,6 +3,7 @@ mod audio;
 mod audio_packs;
 mod benchmark;
 mod capture;
+mod editor;
 mod input;
 mod performance;
 mod presentation;
@@ -20,6 +21,7 @@ mod transfer;
 
 use audio::{open_audio, track_name};
 pub(crate) use benchmark::run as benchmark;
+pub(crate) use editor::run as editor;
 use input::{InputMap, RESERVED_KEYS};
 use presentation::{
     apply_window_settings, fit_frame_to_window, game_rect, menu_point, set_icon, set_title,
