@@ -85,6 +85,11 @@ pub trait StageSource: Send + Sync {
     fn start_music(&self, rom: &[u8], id: StageId) -> Result<u8> {
         self.music(rom, id)
     }
+    /// A name for round `round` on its round card, instead of the
+    /// cartridge's card.
+    fn round_title(&self, _round: u8) -> Option<String> {
+        None
+    }
     /// The substage after `id`; `None` ends the game.
     fn next_substage(&self, rom: &[u8], id: StageId) -> Result<Option<StageId>>;
 }

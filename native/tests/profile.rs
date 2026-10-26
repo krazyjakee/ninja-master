@@ -43,9 +43,10 @@ fn main_menu_opens_both_profile_screens_and_restores_focus_with_every_input_path
     let rom = rom();
     let mut modes = Modes::new(Box::new(Title::menu(Front::load(&rom).unwrap())));
     advance(&mut modes, 100);
-    modes.tick(press(Button::Down));
-    modes.tick(press(Button::Down));
-    modes.tick(press(Button::Down));
+    // NEW GAME, PRACTICE, EXPANSIONS, OPTIONS, then ACHIEVEMENTS.
+    for _ in 0..4 {
+        modes.tick(press(Button::Down));
+    }
     modes.tick(press(Button::Start));
     advance(&mut modes, 100);
     assert_eq!(modes.name(), "Profile");

@@ -32,8 +32,8 @@ pub(crate) use objects::{
     in_sound_window, outside_view_in,
 };
 pub use objects::{Effect, EffectKind, Enemy, EnemyState, Projectile, ShotDown};
-pub(crate) use spawns::placeholder_mapping;
 pub use spawns::{Spawn, boss_arena, spawn_records, stage_spawns};
+pub(crate) use spawns::{placeholder_mapping, spawn};
 pub(crate) use weapons::{AttackObject, PlayerAnchors, PlayerAttack};
 pub use weapons::{PlayerWeapons, SpentShuriken};
 use weapons::{ShurikenTerrain, WallHit};
@@ -334,6 +334,43 @@ impl Combat {
     /// routine is not otherwise part of combat, so its owner sets this bit.
     pub(crate) fn queue_player_event(&mut self, event: PlayerEvent) {
         self.pending_player_event = Some(event);
+    }
+    /// Replace the part's spawn list, keeping a boss arena's boss record.
+    /// Each spawn starts dormant, as at a load.
+    pub(crate) fn replace_spawns(&mut self, spawns: Vec<Spawn>) {
+        let boss = self
+            .enemies
+            .iter()
+            .position(|e| self.spawns[e.spawn].kind == crate::bosses::BOSS_KIND)
+            .map(|index| {
+                (
+                    self.spawns[self.enemies[index].spawn].clone(),
+                    self.enemies[index].clone(),
+                )
+            });
+        self.enemies = spawns
+            .iter()
+            .enumerate()
+            .map(|(index, s)| {
+                Enemy::new(
+                    index,
+                    s.x,
+                    s.y,
+                    self.roster.initial_mapping(s),
+                    u16::from(s.health_counter) + 1,
+                )
+            })
+            .collect();
+        self.spawns = spawns;
+        if let Some((spawn, mut enemy)) = boss {
+            enemy.spawn = self.spawns.len();
+            self.spawns.push(spawn);
+            self.enemies.push(enemy);
+        }
+    }
+    /// Object types whose art the part loads (its object selection).
+    pub(crate) fn art_kinds(&self) -> impl Iterator<Item = u16> + '_ {
+        self.bases.keys().copied()
     }
     /// Keep progression when reloading section-local spawns and art.
     pub fn inherit_progress(&mut self, previous: &Self) {

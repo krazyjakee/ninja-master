@@ -21,6 +21,7 @@ pub mod demo;
 pub mod devtools;
 pub mod ending;
 pub mod enemies;
+pub mod expansion;
 pub mod front_end;
 pub mod front_vdp;
 pub mod game;

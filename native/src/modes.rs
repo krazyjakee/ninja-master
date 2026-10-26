@@ -86,6 +86,13 @@ pub enum ModeChange {
         crate::practice::Kind,
         crate::stage::StageId,
     ),
+    /// The EXPANSIONS menu, with an expansion (by id) selected and a message.
+    Expansions(crate::front_end::Front, Option<std::sync::Arc<str>>, String),
+    /// A new run of an expansion, from its first stage.
+    StartExpansion(
+        crate::front_end::Front,
+        std::sync::Arc<crate::expansion::Expansion>,
+    ),
 }
 
 /// One `$FF002A` handler.
@@ -176,7 +183,10 @@ impl Modes {
         if self.quit {
             return;
         }
-        if matches!(self.current.name(), "Profile" | "Options" | "Practice") {
+        if matches!(
+            self.current.name(),
+            "Profile" | "Options" | "Practice" | "Expansions"
+        ) {
             self.profile.tick_without_notices();
         } else {
             self.profile.tick();
@@ -188,7 +198,7 @@ impl Modes {
         if input.pressed(Button::Mode)
             && matches!(
                 self.current.name(),
-                "Title" | "Options" | "Pause" | "GameOver" | "Profile" | "Practice"
+                "Title" | "Options" | "Pause" | "GameOver" | "Profile" | "Practice" | "Expansions"
             )
         {
             self.current.menu_event(crate::menu::MenuEvent::Back);
@@ -306,6 +316,32 @@ impl Modes {
                             error.to_ascii_uppercase(),
                         ))),
                     }
+                }
+            }
+            Some(ModeChange::Expansions(front, selected, message)) => {
+                self.history = None;
+                self.profile.flush();
+                self.replace(Box::new(crate::expansion::ExpansionScreen::new(
+                    front, selected, message,
+                )));
+            }
+            Some(ModeChange::StartExpansion(front, expansion)) => {
+                let first = crate::stage::StageId::new(1, 1, 0);
+                match Game::load_from(&front.rom, expansion.source(), first) {
+                    Ok(mut game) => {
+                        // No profile identity: the run credits nothing, and
+                        // no history is kept, so it never becomes CONTINUE.
+                        front.prepare(&mut game);
+                        game.start_session(front.options);
+                        game.run.practice = true;
+                        self.history = None;
+                        self.replace(crate::round_screens::StageClear::round_card(Box::new(game)));
+                    }
+                    Err(error) => self.replace(Box::new(crate::expansion::ExpansionScreen::new(
+                        front,
+                        Some(expansion.id.clone()),
+                        error.to_ascii_uppercase(),
+                    ))),
                 }
             }
             Some(ModeChange::Quit) => {
@@ -432,7 +468,11 @@ impl Modes {
             self.profile.observe(&game.run);
         }
         self.profile.flush();
-        if self.current.name() == "Demo" || self.game().is_some_and(|g| g.practice.is_some()) {
+        if self.current.name() == "Demo"
+            || self
+                .game()
+                .is_some_and(|g| g.practice.is_some() || !g.content().is_original())
+        {
             return;
         }
         if self
@@ -476,7 +516,10 @@ impl Modes {
         self.current.draw(frame);
         // Keep requirements, exact statistics and option controls unobscured.
         // The notification queue resumes after leaving these screens.
-        if matches!(self.current.name(), "Profile" | "Options" | "Practice") {
+        if matches!(
+            self.current.name(),
+            "Profile" | "Options" | "Practice" | "Expansions"
+        ) {
             return;
         }
         if let (Some(&index), Some(font)) = (

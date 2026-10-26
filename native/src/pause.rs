@@ -219,8 +219,11 @@ impl Mode for Pause {
                     self.audio.push(STOP_SOUND);
                     return game.finish_practice(false);
                 }
-                let title = Title::menu(Front::from_game(game));
                 self.audio.push(STOP_SOUND);
+                if let Some(menu) = game.leave_expansion("") {
+                    return Some(menu);
+                }
+                let title = Title::menu(Front::from_game(game));
                 return Some(ModeChange::Replace(Box::new(title)));
             }
         }

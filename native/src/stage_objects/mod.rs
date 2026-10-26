@@ -284,6 +284,10 @@ impl StageObjects {
     }
     /// A part change: `$26EE6` starts over unless the new part keeps the
     /// previous part's list ([`keeps_state`]). Returns whether it kept it.
+    /// Drop the part's list-6 records: nothing will be placed.
+    pub(crate) fn clear_records(&mut self) {
+        self.records.clear();
+    }
     pub fn enter_part(&mut self, rom: &[u8], id: StageId) -> Result<bool> {
         if keeps_state(id) {
             self.id = id;

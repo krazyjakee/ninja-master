@@ -18,7 +18,7 @@ mod scroll;
 mod sections;
 mod tile_anim;
 
-pub use data::{Orientation, StageData, UploadKind};
+pub use data::{LAYOUT_BYTES, Orientation, StageData, UploadKind};
 pub use edit::TerrainEdit;
 pub use effects::{
     EVENT_CAMERA_FLOOR, EVENT_CAMERA_X, EVENT_FLAG_TICK, EVENT_PALETTE_TICK, EVENT_PART,

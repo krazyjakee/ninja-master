@@ -257,9 +257,30 @@ impl Game {
         self.combat.world_bounds = self.stage.world_bounds();
     }
 
+    /// The current part's art, layout and collision.
+    pub fn assets(&self) -> &StageAssets {
+        &self.stage.assets
+    }
     /// The catalog `stage_id` belongs to.
     pub fn content(&self) -> crate::content::Content {
         self.source.content()
+    }
+    /// The round card's own name for `round`, for content that replaces
+    /// the cartridge's cards.
+    pub fn round_title(&self, round: u8) -> Option<String> {
+        self.source.round_title(round)
+    }
+    /// For an expansion run: back to the EXPANSIONS menu at this run's
+    /// expansion, showing `message`.
+    pub(crate) fn leave_expansion(&self, message: &str) -> Option<ModeChange> {
+        match self.content() {
+            crate::content::Content::Original => None,
+            crate::content::Content::Expansion(id) => Some(ModeChange::Expansions(
+                crate::front_end::Front::from_game(self),
+                Some(id),
+                message.to_owned(),
+            )),
+        }
     }
     /// The stage-specific routines the current part runs.
     pub fn rules(&self) -> crate::content::StageRules {

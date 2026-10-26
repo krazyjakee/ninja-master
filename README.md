@@ -182,6 +182,24 @@ Best times and ghosts persist in `profile.json`. Practice leaves your normal
 Continue checkpoint intact and does not unlock stages or achievements. Manual
 saving is unavailable during these practice sessions.
 
+## Expansions
+
+Choose **EXPANSIONS** on the main menu to play new stages from expansion
+packs. Drop a pack folder or ZIP into the `expansions` folder beside the
+executable (beside the `.app` on macOS) and pick it from the list. A run
+starts at the expansion's first stage and returns to the list when it ends.
+
+Expansions never affect the original game. Their runs earn no achievements,
+statistics or practice unlocks, don't replace your **CONTINUE** checkpoint,
+and can't be saved to the manual save slots.
+
+Packs contain no original game content. Each stage is built on an original
+stage part, which supplies the art, music, enemy types and any boss from your
+own ROM. A stage can replace that part's layout with its own metatile grid,
+place its own enemies, and move the start and exit.
+[native/sample-expansions](native/sample-expansions/README.md) has a sample
+pack and the format reference.
+
 ## Achievements and statistics
 
 The main menu now includes **Achievements** and **Statistics**, with keyboard,

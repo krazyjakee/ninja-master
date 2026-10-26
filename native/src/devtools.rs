@@ -153,6 +153,10 @@ impl DevTools {
             self.status = "save: unavailable during practice".into();
             return;
         }
+        if modes.game().is_some_and(|g| !g.content().is_original()) {
+            self.status = "save: unavailable in expansions".into();
+            return;
+        }
         let name = self.slots[self.slot].as_ref().map_or_else(
             || format!("Slot {}", self.slot + 1),
             |state| state.name.clone(),
@@ -357,7 +361,7 @@ impl DevTools {
 impl SaveState {
     pub(crate) fn capture(modes: &Modes, tick: u64, name: String) -> Option<Self> {
         let game = modes.game()?;
-        if game.practice.is_some() {
+        if game.practice.is_some() || !game.content().is_original() {
             return None;
         }
         let mut frame = crate::render::Frame::default();

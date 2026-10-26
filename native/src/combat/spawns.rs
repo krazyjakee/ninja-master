@@ -92,31 +92,48 @@ pub fn spawn_records(rom: &[u8], id: StageId) -> Result<Vec<Spawn>> {
         if x < 0 {
             return Ok(result);
         }
-        let kind = word(rom, p + 6)?;
-        // $12E9A holds 64 handlers: types are byte offsets $00..$FC.
-        if !kind.is_multiple_of(4) || kind >= 0x100 {
-            return Err(format!("unsupported object type ${kind:x}"));
-        }
-        let stats = word(rom, 0x68aa + usize::from(kind))?;
-        let handler = pointer(rom, 0x12e9a + usize::from(kind))?;
-        result.push(Spawn {
-            source: p,
-            x: i32::from(x),
-            y: i32::from(word(rom, p + 2)? as i16),
-            flags: word(rom, p + 4)?,
-            kind,
-            handler,
-            score_bcd: word(rom, 0x68a8 + usize::from(kind))?,
-            contact_damage: (stats >> 8) as u8,
-            health_counter: stats as u8,
-            placeholder_mapping: if enemies::ported(kind) {
-                0
-            } else {
-                placeholder_mapping(rom, handler)
-            },
-        });
+        result.push(spawn(
+            rom,
+            p,
+            (i32::from(x), i32::from(word(rom, p + 2)? as i16)),
+            word(rom, p + 4)?,
+            word(rom, p + 6)?,
+        )?);
     }
     Err("unterminated spawn list".into())
+}
+/// A spawn record of type `kind` with the type's score, contact damage and
+/// health (`$68A8`/`$68AA`). `source` identifies the record: ROM spawns use
+/// their address, which some handlers compare.
+pub(crate) fn spawn(
+    rom: &[u8],
+    source: usize,
+    (x, y): (i32, i32),
+    flags: u16,
+    kind: u16,
+) -> Result<Spawn> {
+    // $12E9A holds 64 handlers: types are byte offsets $00..$FC.
+    if !kind.is_multiple_of(4) || kind >= 0x100 {
+        return Err(format!("unsupported object type ${kind:x}"));
+    }
+    let stats = word(rom, 0x68aa + usize::from(kind))?;
+    let handler = pointer(rom, 0x12e9a + usize::from(kind))?;
+    Ok(Spawn {
+        source,
+        x,
+        y,
+        flags,
+        kind,
+        handler,
+        score_bcd: word(rom, 0x68a8 + usize::from(kind))?,
+        contact_damage: (stats >> 8) as u8,
+        health_counter: stats as u8,
+        placeholder_mapping: if enemies::ported(kind) {
+            0
+        } else {
+            placeholder_mapping(rom, handler)
+        },
+    })
 }
 
 /// Object selection (32-byte prefix, then spawns) of one part.

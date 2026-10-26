@@ -285,6 +285,8 @@ pub struct StageClear {
     portrait: Option<Vdp>,
     /// "ROUND n" and the round name of `next`, read as the card begins.
     card: [Option<TextBlock>; 2],
+    /// An expansion round's card: "ROUND n" and its name.
+    card_title: Option<(String, String)>,
     /// ROM planes, art, palette and markers for the progress map.
     card_map: Option<Vdp>,
     ticks: u32,
@@ -311,6 +313,7 @@ impl StageClear {
             clear,
             portrait: None,
             card: [None, None],
+            card_title: None,
             card_map: None,
             ticks: 0,
             audio: Audio::default(),
@@ -358,7 +361,15 @@ impl StageClear {
             Step::Card(_) => {
                 self.music(ROUND_CARD_MUSIC);
                 // RoundCard_Titles and RoundCard_TitleTexts: pointers per round.
-                let rom = held_game(&self.saved).map(Game::rom);
+                let game = held_game(&self.saved);
+                if let (Some(game), Some(next)) = (game, self.next)
+                    && let Some(title) = game.round_title(next.round)
+                {
+                    let number = format!("ROUND {}", next.round);
+                    self.card_title = Some((number, title.to_ascii_uppercase()));
+                    return;
+                }
+                let rom = game.map(Game::rom);
                 let round = self.next.map(StageId::round_index);
                 self.card = [ROUND_NUMBERS, ROUND_NAMES].map(|table| {
                     let address = pointer(rom?, table + round? * 4).ok()?;
@@ -377,7 +388,9 @@ impl StageClear {
     fn after_fade_out(&mut self) -> Option<ModeChange> {
         let game = held_game(&self.saved)?;
         match self.next {
-            None => Some(ModeChange::Replace(Box::new(Ending::new(game)))),
+            None => game
+                .leave_expansion("EXPANSION COMPLETE")
+                .or_else(|| Some(ModeChange::Replace(Box::new(Ending::new(game))))),
             Some(next) if next.round != game.stage_id.round => {
                 self.begin(Step::ClearTitle(TITLE_TICKS));
                 None
@@ -394,7 +407,9 @@ impl StageClear {
                 next.fade_in();
                 ModeChange::Replace(Box::new(next))
             }
-            Err(_) => ModeChange::Replace(Box::new(Ending::new(game))),
+            Err(error) => game
+                .leave_expansion(&error.to_ascii_uppercase())
+                .unwrap_or_else(|| ModeChange::Replace(Box::new(Ending::new(game)))),
         }
     }
     fn draw_round_clear(&self, frame: &mut Frame, game: &Game) {
@@ -440,6 +455,15 @@ impl StageClear {
     }
     fn draw_round_card(&self, frame: &mut Frame, game: &Game) {
         let font = game.font();
+        if let Some((number, name)) = &self.card_title {
+            let centre = frame.width() as i32 / 2;
+            let left = |text: &str, scale: i32| centre - text.len() as i32 * 4 * scale;
+            let gold = Style::plain(md_color(GOLD), 2);
+            font.draw_text(frame, left(number, 2), 88, number, gold);
+            let plain = Style::plain(font.foreground, 1);
+            font.draw_text(frame, left(name, 1), 120, name, plain);
+            return;
+        }
         let [number, name] = &self.card;
         if let Some(number) = number {
             let (col, row) = number.cell(PLANE_A);

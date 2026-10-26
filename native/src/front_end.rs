@@ -41,6 +41,9 @@ pub const GOLD: u16 = 0x02ae;
 pub const WHITE: u16 = 0x0eee;
 /// Native title/menu soundtrack: the intro's SHINOBI sound-test record.
 const TITLE_MUSIC: u8 = 0x0d;
+/// Title menu rows besides CONTINUE: NEW GAME, PRACTICE, EXPANSIONS,
+/// OPTIONS, ACHIEVEMENTS, STATISTICS and QUIT.
+const MENU_ITEMS: usize = 7;
 /// `HighScore_Init` (`$115B4`): 10000 at power-on.
 pub const HIGH_SCORE_INIT: u32 = 10_000;
 /// `Title_FadeIn` then 12 seconds of `Title_PressStart`. Native menus stay
@@ -156,6 +159,8 @@ pub enum Next {
     Achievements,
     Statistics,
     Practice,
+    /// Native: the EXPANSIONS menu (`crate::expansion`).
+    Expansions,
     /// `Title_ModeGame`: `Mode_Game`, which starts with the round card.
     Game,
     Continue,
@@ -181,6 +186,7 @@ pub fn go(front: &Front, next: Next) -> ModeChange {
             return ModeChange::Profile(front, crate::profile::ScreenKind::Statistics);
         }
         Next::Practice => return ModeChange::Practice(front, None, None, None),
+        Next::Expansions => return ModeChange::Expansions(front, None, String::new()),
         Next::Game => return ModeChange::NewGame(front),
         Next::Continue => return ModeChange::Continue(front),
         Next::Demo => {
@@ -416,7 +422,7 @@ impl Title {
     fn open_menu(&mut self) {
         self.viewport.selected = self.screen.front.title_selection;
         self.viewport.first = self.screen.front.title_first;
-        self.viewport.reveal(7);
+        self.viewport.reveal(MENU_ITEMS + 1);
         self.menu = Some(self.viewport.selected);
         self.timer = MENU_TICKS;
         if let Some(art) = self.art.as_mut() {
@@ -447,16 +453,22 @@ impl Title {
                 self.screen.front.title_selection = self.viewport.selected;
                 self.screen.front.title_first = self.viewport.first;
                 self.screen.front.return_to_menu = true;
+                self.screen.leave(Next::Expansions);
+            }
+            item if item == 3 + usize::from(self.resume_available) => {
+                self.screen.front.title_selection = self.viewport.selected;
+                self.screen.front.title_first = self.viewport.first;
+                self.screen.front.return_to_menu = true;
                 self.screen.leave(Next::Options);
             }
-            item if item == 3 + usize::from(self.resume_available)
-                || item == 4 + usize::from(self.resume_available) =>
+            item if item == 4 + usize::from(self.resume_available)
+                || item == 5 + usize::from(self.resume_available) =>
             {
                 self.screen.front.title_selection = self.viewport.selected;
                 self.screen.front.title_first = self.viewport.first;
                 self.screen.front.return_to_menu = true;
                 self.screen
-                    .leave(if item == 3 + usize::from(self.resume_available) {
+                    .leave(if item == 4 + usize::from(self.resume_available) {
                         Next::Achievements
                     } else {
                         Next::Statistics
@@ -517,7 +529,7 @@ impl Mode for Title {
                     menu.step(step, 2);
                 } else {
                     self.viewport
-                        .step(step, 6 + usize::from(self.resume_available));
+                        .step(step, MENU_ITEMS + usize::from(self.resume_available));
                     self.menu = Some(self.viewport.selected);
                 }
                 if input.pressed(Button::Start)
@@ -559,7 +571,14 @@ impl Mode for Title {
                 if self.resume_available {
                     rows.push("CONTINUE");
                 }
-                rows.extend(["PRACTICE", "OPTIONS", "ACHIEVEMENTS", "STATISTICS", "QUIT"]);
+                rows.extend([
+                    "PRACTICE",
+                    "EXPANSIONS",
+                    "OPTIONS",
+                    "ACHIEVEMENTS",
+                    "STATISTICS",
+                    "QUIT",
+                ]);
                 let _ = art.scrolling_menu(
                     &self.screen.front.rom,
                     &rows,
@@ -586,7 +605,7 @@ impl Mode for Title {
     }
     fn menu_context(&mut self, available: bool, status: &str) {
         self.resume_available = available;
-        self.viewport.reveal(6 + usize::from(available));
+        self.viewport.reveal(MENU_ITEMS + usize::from(available));
         if self.menu.is_some() {
             self.menu = Some(self.viewport.selected);
         }
@@ -624,7 +643,7 @@ impl Mode for Title {
         let count = if self.confirmation.is_some() {
             2
         } else {
-            6 + usize::from(self.resume_available)
+            MENU_ITEMS + usize::from(self.resume_available)
         };
         let menu = self.confirmation.as_mut().unwrap_or(&mut self.viewport);
         match event {

@@ -165,8 +165,9 @@ impl GameOver {
         self.fade = Fade::Out(0);
     }
     fn to_sega_logo(&self) -> Option<ModeChange> {
-        let front = Front::from_game(held_game(&self.saved)?);
-        Some(go(&front, Next::SegaLogo))
+        let game = held_game(&self.saved)?;
+        game.leave_expansion("GAME OVER")
+            .or_else(|| Some(go(&Front::from_game(game), Next::SegaLogo)))
     }
     /// `GameOver_ModeGame` with `Game_Requests` bit 4: state `$28` goes
     /// back to state 4 and the round card.
