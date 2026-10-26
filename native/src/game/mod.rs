@@ -154,6 +154,8 @@ pub const REQUEST_PART_LOAD: u8 = 8;
 
 #[derive(Clone)]
 pub struct Game {
+    /// Where this session's stages come from (`crate::content`).
+    source: std::sync::Arc<dyn crate::content::StageSource>,
     pub run: crate::profile::Run,
     pub(crate) practice: Option<crate::practice::Session>,
     /// Round/substage (1-based) and part being played (`$FF37A6/$FF37A8/$FF37AA`).
@@ -255,6 +257,10 @@ impl Game {
         self.combat.world_bounds = self.stage.world_bounds();
     }
 
+    /// The catalog `stage_id` belongs to.
+    pub fn content(&self) -> crate::content::Content {
+        self.source.content()
+    }
     /// Index of the part being played.
     pub fn part(&self) -> usize {
         self.stage_id.part_index()
@@ -1007,6 +1013,8 @@ impl Game {
     }
 }
 
+#[cfg(test)]
+mod content_tests;
 #[cfg(test)]
 mod roadmap_tests;
 #[cfg(test)]

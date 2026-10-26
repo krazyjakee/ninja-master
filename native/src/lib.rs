@@ -15,6 +15,7 @@ pub mod audio_output;
 pub mod audio_pack;
 pub mod bosses;
 pub mod combat;
+pub mod content;
 pub mod death;
 pub mod demo;
 pub mod devtools;

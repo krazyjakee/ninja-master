@@ -16,7 +16,8 @@ impl Game {
     /// The substage `Mode_Game` state `$20` moves to after this one; `None`
     /// past 7-3, where `$B1A0` installs `Mode_Ending`.
     pub fn next_stage(&self) -> Option<StageId> {
-        crate::stage::next_substage(&self.rom, self.stage_id)
+        self.source
+            .next_substage(&self.rom, self.stage_id)
             .ok()
             .flatten()
     }
@@ -24,7 +25,7 @@ impl Game {
     /// score and, inside a round, the bonus flags and a music id that is
     /// already playing (`$4B02`).
     pub fn load_next(&self, next: StageId) -> Result<Self, String> {
-        let mut game = Self::load_stage(&self.rom, next)?;
+        let mut game = Self::load_from(&self.rom, self.source.clone(), next)?;
         game.run = self.run.clone();
         game.practice = self.practice.clone();
         game.run.clear_recorded = false;
@@ -183,7 +184,9 @@ impl Game {
         // Section-local objects and projectiles restart; later parts' caches
         // stay untouched.
         let id = self.stage_id;
-        let mut combat = crate::combat::Combat::load_stage(&self.rom, id)
+        let mut combat = self
+            .source
+            .combat(&self.rom, id)
             .expect("previously validated section combat");
         combat.inherit_progress(&self.combat);
         self.combat = combat;
@@ -192,14 +195,18 @@ impl Game {
         self.stage.assets.data.revert_edits();
         // $1FA7E/$1FBB8 replace the final arena's art, maps and palettes.
         if id == StageId::new(7, 3, 0) {
-            self.stage.assets = crate::assets::StageAssets::load_stage(&self.rom, id)
+            self.stage.assets = self
+                .source
+                .stage_assets(&self.rom, id)
                 .expect("previously validated final arena");
         }
         // It redraws the 3-3 corridor and head (#96) and sets VDP register
         // $0B again (no 2-3 wave).
         self.stage.reload_boss_planes();
         // The reload passes $26EE6: the list-6 mask and objects start over.
-        self.objects = crate::stage_objects::StageObjects::load(&self.rom, id)
+        self.objects = self
+            .source
+            .objects(&self.rom, id)
             .expect("previously validated section objects");
         // Game_InitAmmo selects the option's count.
         self.combat.hud.ammo = self.options.start_ammo(&self.rom);
@@ -240,7 +247,7 @@ impl Game {
         // Func_0119F2 requests the stage music again ($4AC8), so a
         // camera-lock theme gives way; the capture shows the stage track
         // restarted after the death fade.
-        if let Ok(command) = crate::stage::stage_music(&self.rom, id) {
+        if let Ok(command) = self.source.music(&self.rom, id) {
             self.music = command;
             self.music_request = Some(command);
         }
@@ -252,10 +259,14 @@ impl Game {
     pub(super) fn part_state(&mut self, part: usize) -> (StageAssets, Combat) {
         let id = self.stage_id.with_part(part as u8);
         let assets = self.pending_stages[part].take().unwrap_or_else(|| {
-            StageAssets::load_stage(&self.rom, id).expect("previously validated section")
+            self.source
+                .stage_assets(&self.rom, id)
+                .expect("previously validated section")
         });
         let mut combat = self.pending_combat[part].take().unwrap_or_else(|| {
-            Combat::load_stage(&self.rom, id).expect("previously validated section combat")
+            self.source
+                .combat(&self.rom, id)
+                .expect("previously validated section combat")
         });
         if self.exploring() {
             combat
@@ -298,8 +309,8 @@ impl Game {
         self.stage.event_ticks = None;
         // Player_Init writes VDP register $07 = 0 ($22BC0).
         self.stage.backdrop_entry = 0;
-        self.objects
-            .enter_part(&self.rom, id)
+        self.source
+            .enter_part_objects(&mut self.objects, &self.rom, id)
             .expect("previously validated section objects");
         let section = &self.sections[part];
         let fushin = self.player.fushin;
@@ -339,7 +350,7 @@ impl Game {
         self.fade_in();
         // Func_0119F2 asks for the part's music ($4AC8); an id already
         // playing continues ($4B02).
-        if let Ok(command) = crate::stage::stage_music(&self.rom, id) {
+        if let Ok(command) = self.source.music(&self.rom, id) {
             self.request_music(command);
         }
     }

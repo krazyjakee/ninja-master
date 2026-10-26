@@ -1,14 +1,25 @@
 use super::*;
+use crate::content::{Cartridge, StageSource};
+use std::sync::Arc;
 
 impl Game {
     /// Round 1-1, part 0.
     pub fn load(rom: &[u8]) -> Result<Self, String> {
         Self::load_stage(rom, StageId::FOREST)
     }
-    /// Any round/substage, starting in `id.part`. Every part of the substage
-    /// is loaded up front so stream handoffs never stall.
+    /// Any original round/substage, starting in `id.part`.
     pub fn load_stage(rom: &[u8], id: StageId) -> Result<Self, String> {
-        let sections = crate::stage::sections(rom, id.round_index(), id.substage_index())?;
+        Self::load_from(rom, Cartridge::source(), id)
+    }
+    /// Substage `id` of `source`'s content, starting in `id.part`. Every
+    /// part of the substage is loaded up front so stream handoffs never
+    /// stall.
+    pub fn load_from(
+        rom: &[u8],
+        source: Arc<dyn StageSource>,
+        id: StageId,
+    ) -> Result<Self, String> {
+        let sections = source.sections(rom, id)?;
         let part = id.part_index();
         if part >= sections.len() {
             return Err(format!("{id}: substage has {} parts", sections.len()));
@@ -16,38 +27,31 @@ impl Game {
         let ids: Vec<StageId> = (0..sections.len()).map(|p| id.with_part(p as u8)).collect();
         let mut pending_stages = ids
             .iter()
-            .map(|&p| StageAssets::load_stage(rom, p).map(Some))
+            .map(|&p| source.stage_assets(rom, p).map(Some))
             .collect::<Result<Vec<_>, _>>()?;
         let mut pending_combat = ids
             .iter()
-            .map(|&p| crate::combat::Combat::load_stage(rom, p).map(Some))
+            .map(|&p| source.combat(rom, p).map(Some))
             .collect::<Result<Vec<_>, _>>()?;
         let scroll = ids
             .iter()
-            .map(|&p| crate::stage::scroll_model(rom, p))
+            .map(|&p| source.scroll_model(rom, p))
             .collect::<Result<Vec<_>, _>>()?;
         let bounds = sections
             .iter()
-            .map(|section| CameraBounds::for_section(rom, section))
+            .map(|section| source.camera_bounds(rom, section))
             .collect::<Result<Vec<_>, _>>()?;
         let assets = pending_stages[part].take().unwrap();
         let combat = pending_combat[part].take().unwrap();
         let sprites = PlayerAssets::load(rom)?;
-        // `$119F2` selects the stage-table music first. On 2-1, `Player_Init`
-        // immediately replaces IDATEN with UMA at `$22CC4`; the driver later
-        // raises its communication byte to request IDATEN at `$205D6`.
-        let music = if id.round == 2 && id.substage == 1 {
-            SoundEvent::HorseStart.command(rom)?
-        } else {
-            crate::stage::stage_music(rom, id)?
-        };
+        let music = source.start_music(rom, id)?;
         // $11720/$11754: the part record's player and camera start.
         let (x, y) = sections[part].player_start;
         let mut player = Player::new(x, y);
         player.grounded = Player::occupied(&assets, x, y + 1);
         (player.camera_x, player.camera_y) = sections[part].camera_start;
         let special = crate::special::Special::for_stage(rom, id, &sections[part], &mut player);
-        let objects = crate::stage_objects::StageObjects::load(rom, id)?;
+        let objects = source.objects(rom, id)?;
         let autoscroll = CameraAutoScroll::new(
             AutoScroll(sections[part].raw[13]),
             (player.camera_x, player.camera_y),
@@ -59,6 +63,7 @@ impl Game {
         }
         let door = doors::Door::entrance(rom, id, &sections[part])?;
         let mut game = Self {
+            source,
             practice: None,
             run: crate::profile::Run {
                 initial_ammo: crate::options::GameOptions::default().start_ammo(rom),
