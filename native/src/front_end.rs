@@ -42,8 +42,8 @@ pub const WHITE: u16 = 0x0eee;
 /// Native title/menu soundtrack: the intro's SHINOBI sound-test record.
 const TITLE_MUSIC: u8 = 0x0d;
 /// Title menu rows besides CONTINUE: NEW GAME, PRACTICE, EXPANSIONS,
-/// OPTIONS, ACHIEVEMENTS, STATISTICS and QUIT.
-const MENU_ITEMS: usize = 7;
+/// EDITOR, OPTIONS, ACHIEVEMENTS, STATISTICS and QUIT.
+const MENU_ITEMS: usize = 8;
 /// `HighScore_Init` (`$115B4`): 10000 at power-on.
 pub const HIGH_SCORE_INIT: u32 = 10_000;
 /// `Title_FadeIn` then 12 seconds of `Title_PressStart`. Native menus stay
@@ -161,6 +161,8 @@ pub enum Next {
     Practice,
     /// Native: the EXPANSIONS menu (`crate::expansion`).
     Expansions,
+    /// Native: the expansion editor (`crate::editor`), in its own window.
+    Editor,
     /// `Title_ModeGame`: `Mode_Game`, which starts with the round card.
     Game,
     Continue,
@@ -187,6 +189,7 @@ pub fn go(front: &Front, next: Next) -> ModeChange {
         }
         Next::Practice => return ModeChange::Practice(front, None, None, None),
         Next::Expansions => return ModeChange::Expansions(front, None, String::new()),
+        Next::Editor => return ModeChange::Editor(front),
         Next::Game => return ModeChange::NewGame(front),
         Next::Continue => return ModeChange::Continue(front),
         Next::Demo => {
@@ -459,16 +462,22 @@ impl Title {
                 self.screen.front.title_selection = self.viewport.selected;
                 self.screen.front.title_first = self.viewport.first;
                 self.screen.front.return_to_menu = true;
+                self.screen.leave(Next::Editor);
+            }
+            item if item == 4 + usize::from(self.resume_available) => {
+                self.screen.front.title_selection = self.viewport.selected;
+                self.screen.front.title_first = self.viewport.first;
+                self.screen.front.return_to_menu = true;
                 self.screen.leave(Next::Options);
             }
-            item if item == 4 + usize::from(self.resume_available)
-                || item == 5 + usize::from(self.resume_available) =>
+            item if item == 5 + usize::from(self.resume_available)
+                || item == 6 + usize::from(self.resume_available) =>
             {
                 self.screen.front.title_selection = self.viewport.selected;
                 self.screen.front.title_first = self.viewport.first;
                 self.screen.front.return_to_menu = true;
                 self.screen
-                    .leave(if item == 4 + usize::from(self.resume_available) {
+                    .leave(if item == 5 + usize::from(self.resume_available) {
                         Next::Achievements
                     } else {
                         Next::Statistics
@@ -574,6 +583,7 @@ impl Mode for Title {
                 rows.extend([
                     "PRACTICE",
                     "EXPANSIONS",
+                    "EDITOR",
                     "OPTIONS",
                     "ACHIEVEMENTS",
                     "STATISTICS",

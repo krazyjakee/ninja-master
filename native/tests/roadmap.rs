@@ -182,7 +182,7 @@ fn mouse_options_scroll_and_return_to_main_menu_focus() {
     let rom = cartridge("us");
     let mut title = Title::menu(Front::load(&rom).unwrap());
     settle(&mut title);
-    title.menu_event(MenuEvent::Scroll(3));
+    title.menu_event(MenuEvent::Scroll(4));
     title.menu_event(MenuEvent::Click(100, 149, false)); // Options is the first row after scrolling.
     let mut modes = Modes::new(Box::new(title));
     for _ in 0..100 {
@@ -225,11 +225,11 @@ fn original_menu_art_survives_scrolling_control_expansion_and_fades() {
     // Visually reviewed cartridge typography, centred menu, cursor and scroll cue.
     assert_eq!(frame.checksum(), 0xcb1a06c02975a066);
     title.menu_event(MenuEvent::Scroll(100));
-    assert_eq!(title.menu, Some(4));
+    assert_eq!(title.menu, Some(5));
     title.tick(press(Button::Down));
-    assert_eq!(title.menu, Some(5)); // Statistics.
+    assert_eq!(title.menu, Some(6)); // Statistics.
     title.tick(press(Button::Down));
-    assert_eq!(title.menu, Some(6)); // Quit.
+    assert_eq!(title.menu, Some(7)); // Quit.
     title.tick(press(Button::Down));
     assert_eq!(title.menu, Some(0));
 

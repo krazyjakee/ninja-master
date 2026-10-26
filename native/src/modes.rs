@@ -86,6 +86,8 @@ pub enum ModeChange {
         crate::practice::Kind,
         crate::stage::StageId,
     ),
+    /// Open the expansion editor beside the game, back on the title menu.
+    Editor(crate::front_end::Front),
     /// The EXPANSIONS menu, with an expansion (by id) selected and a message.
     Expansions(crate::front_end::Front, Option<std::sync::Arc<str>>, String),
     /// A new run of an expansion, from its first stage.
@@ -161,6 +163,8 @@ pub struct Modes {
     /// Requests of modes that were replaced before the caller took them.
     audio: Audio,
     quit: bool,
+    /// EDITOR was chosen (`take_editor_request`).
+    editor: bool,
     progress: crate::progress::Progress,
     pub(crate) history: Option<crate::devtools::replay::History>,
     pub profile: crate::profile::Profile,
@@ -172,6 +176,7 @@ impl Modes {
             current: mode,
             audio: Audio::default(),
             quit: false,
+            editor: false,
             progress: crate::progress::Progress::default(),
             history: None,
             profile: crate::profile::Profile::default(),
@@ -347,6 +352,10 @@ impl Modes {
             Some(ModeChange::Quit) => {
                 self.profile.flush();
                 self.quit = true;
+            }
+            Some(ModeChange::Editor(front)) => {
+                self.editor = true;
+                self.replace(Box::new(crate::front_end::Title::menu(front)));
             }
             Some(ModeChange::NewGame(front)) => match front.new_game() {
                 Ok(game) => {
@@ -629,6 +638,11 @@ impl Modes {
     /// The player chose QUIT; the desktop front end should close.
     pub fn quit_requested(&self) -> bool {
         self.quit
+    }
+    /// The player chose EDITOR since the last call; the desktop front end
+    /// opens the editor.
+    pub fn take_editor_request(&mut self) -> bool {
+        std::mem::take(&mut self.editor)
     }
 }
 

@@ -19,8 +19,9 @@ Two samples:
 
 ## The editor
 
-`ninja-master-native --editor [PACK]` opens a pack folder in the expansion
-editor, or starts a new pack. It writes the format below, so packs can still
+Choose **EDITOR** on the main menu, or run
+`ninja-master-native --editor [PACK]`, to open the expansion editor in its own
+window. From the command line it opens a pack folder, or starts a new pack. It writes the format below, so packs can still
 be edited by hand. Opening a pack and saving it changes only the manifest's
 formatting.
 

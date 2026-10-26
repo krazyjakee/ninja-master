@@ -265,7 +265,7 @@ fn run() -> Result<(), String> {
                     Full game: --boot [--rom FILE] (SEGA logo, story, title, options, attract demo, game, game over/continue, ending)\n\
                     Engine demo: --demo (synthetic test scene)\n\
                     Expansion art template: --expansion-template R-S:P DIR [--rom FILE] (palettes, a blank sheet and the stage's numbered metatiles)\n\
-                    Expansion editor: --editor [PACK] [--rom FILE] (desktop; opens a pack folder or starts a new one)\n\
+                    Expansion editor: --editor [PACK] [--rom FILE], or EDITOR on the main menu (desktop; opens a pack folder or starts a new one)\n\
                     Play an expansion: --play --expansion PACK [--round R --substage S [--part P]] (stages count from 1-1 within the pack)\n\
                     Rendering benchmark: --render-benchmark DIR [--frames N] [--rom FILE] (desktop GPU required; procedural fixtures need no ROM)\n\
                     Direct play: --play [--round R --substage S [--part P]] [--rom FILE] [--asset-report FILE] [--scripted] (move, run, jump, attack, ninjutsu, pause)\n\

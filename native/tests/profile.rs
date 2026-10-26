@@ -43,8 +43,8 @@ fn main_menu_opens_both_profile_screens_and_restores_focus_with_every_input_path
     let rom = rom();
     let mut modes = Modes::new(Box::new(Title::menu(Front::load(&rom).unwrap())));
     advance(&mut modes, 100);
-    // NEW GAME, PRACTICE, EXPANSIONS, OPTIONS, then ACHIEVEMENTS.
-    for _ in 0..4 {
+    // NEW GAME, PRACTICE, EXPANSIONS, EDITOR, OPTIONS, then ACHIEVEMENTS.
+    for _ in 0..5 {
         modes.tick(press(Button::Down));
     }
     modes.tick(press(Button::Start));
@@ -196,4 +196,28 @@ fn disabled_shurikens_new_game_and_automatic_continue_remain_eligible() {
     assert!(modes.profile.data.lifetime.ticks > 0);
     drop(modes);
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+#[ignore = "requires a user-supplied cartridge"]
+fn the_main_menu_editor_item_asks_for_the_editor_and_stays_on_the_title() {
+    let rom = rom();
+    let mut modes = Modes::new(Box::new(Title::menu(Front::load(&rom).unwrap())));
+    advance(&mut modes, 100);
+    assert!(!modes.take_editor_request());
+    // NEW GAME, PRACTICE, EXPANSIONS, then EDITOR.
+    for _ in 0..3 {
+        modes.tick(press(Button::Down));
+    }
+    modes.tick(press(Button::Start));
+    advance(&mut modes, 100);
+    assert!(modes.take_editor_request());
+    assert!(!modes.take_editor_request(), "taken once");
+    assert_eq!(modes.name(), "Title");
+    // The menu comes back on EDITOR: Up then Start opens EXPANSIONS.
+    modes.tick(press(Button::Up));
+    modes.tick(press(Button::Start));
+    advance(&mut modes, 100);
+    assert_eq!(modes.name(), "Expansions");
+    assert!(!modes.take_editor_request());
 }

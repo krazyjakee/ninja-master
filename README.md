@@ -201,7 +201,9 @@ enemies, and move the start and exit.
 [native/sample-expansions](native/sample-expansions/README.md) has a sample
 pack and the format reference.
 
-To make a pack, run `ninja-master-native --editor` to start a new one, or
+To make a pack, choose **EDITOR** on the main menu. The expansion editor
+opens in its own window beside the game. You can also run
+`ninja-master-native --editor` to start a new pack, or
 `ninja-master-native --editor PACK-FOLDER` to open one. The editor draws each
 part with your ROM's art. It edits rounds, stages and parts, paints layouts,
 places enemies, the start and the exit, and assigns art cells. It also checks

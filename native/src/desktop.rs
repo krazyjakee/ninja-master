@@ -60,6 +60,18 @@ fn pack_notes(pack: &AudioPack) -> String {
         .fold(String::new(), |text, note| text + note + ". ")
 }
 
+/// The title menu's EDITOR: the expansion editor runs as its own process,
+/// with its own window, beside the game.
+fn open_editor(rom: Option<&Path>) -> Result<(), String> {
+    let mut command =
+        std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
+    command.arg("--editor");
+    if let Some(rom) = rom {
+        command.arg("--rom").arg(rom);
+    }
+    command.spawn().map(drop).map_err(|e| e.to_string())
+}
+
 fn save_settings(path: Option<&Path>, settings: &Settings) {
     if let Some(path) = path
         && let Err(error) = settings.save(path)
@@ -834,6 +846,17 @@ pub(super) fn run(
         }
         if scene.quit_requested() {
             break 'running;
+        }
+        if let Scene::Play(modes) = &mut *scene
+            && modes.take_editor_request()
+        {
+            let message = match open_editor(options.rom.as_deref()) {
+                Ok(()) => "The expansion editor opens in its own window.".to_string(),
+                Err(error) => format!("Could not open the editor: {error}"),
+            };
+            eprintln!("{message}");
+            toast = Some((message, Instant::now() + Duration::from_secs(5)));
+            repaint = true;
         }
 
         // Native Options owns the controls; the desktop applies and persists
