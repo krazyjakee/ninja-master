@@ -140,7 +140,7 @@ impl Game {
     /// the high score, the options, the selected ninjutsu and the round's
     /// bonus flags carry over.
     pub fn continue_game(&self) -> Result<Self, String> {
-        let mut game = Self::load_stage(&self.rom, self.stage_id.with_part(0))?;
+        let mut game = Self::load_from(&self.rom, self.source.clone(), self.stage_id.with_part(0))?;
         game.set_effects(self.stage.effects_enabled);
         game.transitions = self.transitions;
         game.high_score = self.high_score.max(self.combat.hud.score);
@@ -184,6 +184,7 @@ impl Game {
         // Section-local objects and projectiles restart; later parts' caches
         // stay untouched.
         let id = self.stage_id;
+        let routines = self.rules().routines;
         let mut combat = self
             .source
             .combat(&self.rom, id)
@@ -194,7 +195,7 @@ impl Game {
         // Mode_StageLoad decodes the layout again: burnt floors come back.
         self.stage.assets.data.revert_edits();
         // $1FA7E/$1FBB8 replace the final arena's art, maps and palettes.
-        if id == StageId::new(7, 3, 0) {
+        if routines == StageId::new(7, 3, 0) {
             self.stage.assets = self
                 .source
                 .stage_assets(&self.rom, id)
@@ -224,8 +225,8 @@ impl Game {
             section.player_start.1 + 1,
         );
         // $11A08/$399D4 reset the door script after every stage reload.
-        self.door =
-            super::doors::Door::entrance(&self.rom, id, section).expect("validated door script");
+        self.door = super::doors::Door::entrance(&self.rom, routines, section)
+            .expect("validated door script");
         self.run.encounter = None;
         self.run.encounter_finished = false;
         self.cast = None;
@@ -235,7 +236,7 @@ impl Game {
         self.lost_fade = None;
         self.special = crate::special::Special::for_stage(
             &self.rom,
-            self.stage_id,
+            routines,
             &self.sections[self.part()],
             &mut self.player,
         );
@@ -299,6 +300,7 @@ impl Game {
     /// and fades in.
     pub(super) fn load_part(&mut self, part: usize) {
         let id = self.stage_id.with_part(part as u8);
+        let routines = self.source.rules(id).routines;
         let (assets, mut combat) = self.part_state(part);
         combat.inherit_progress(&self.combat);
         combat.invulnerability = 0;
@@ -334,11 +336,11 @@ impl Game {
         self.lag = 0;
         self.lost_fade = None;
         self.part_fade = None;
-        self.door =
-            super::doors::Door::entrance(&self.rom, id, section).expect("validated door script");
+        self.door = super::doors::Door::entrance(&self.rom, routines, section)
+            .expect("validated door script");
         self.special = crate::special::Special::for_stage(
             &self.rom,
-            id,
+            routines,
             &self.sections[part],
             &mut self.player,
         );

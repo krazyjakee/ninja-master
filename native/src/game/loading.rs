@@ -41,6 +41,7 @@ impl Game {
             .iter()
             .map(|section| source.camera_bounds(rom, section))
             .collect::<Result<Vec<_>, _>>()?;
+        let rules = source.rules(id);
         let assets = pending_stages[part].take().unwrap();
         let combat = pending_combat[part].take().unwrap();
         let sprites = PlayerAssets::load(rom)?;
@@ -50,7 +51,8 @@ impl Game {
         let mut player = Player::new(x, y);
         player.grounded = Player::occupied(&assets, x, y + 1);
         (player.camera_x, player.camera_y) = sections[part].camera_start;
-        let special = crate::special::Special::for_stage(rom, id, &sections[part], &mut player);
+        let special =
+            crate::special::Special::for_stage(rom, rules.routines, &sections[part], &mut player);
         let objects = source.objects(rom, id)?;
         let autoscroll = CameraAutoScroll::new(
             AutoScroll(sections[part].raw[13]),
@@ -58,10 +60,10 @@ impl Game {
         );
         let mut stage = Viewer::new(assets, View::Scene);
         // The asset preview uses the final mech colours; gameplay begins black.
-        if id.round == 5 && id.substage == 3 {
+        if (rules.routines.round, rules.routines.substage) == (5, 3) {
             stage.reload_boss_planes();
         }
-        let door = doors::Door::entrance(rom, id, &sections[part])?;
+        let door = doors::Door::entrance(rom, rules.routines, &sections[part])?;
         let mut game = Self {
             source,
             practice: None,

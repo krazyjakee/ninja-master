@@ -34,10 +34,37 @@ impl Content {
     }
 }
 
+/// Which of the cartridge's stage-specific routines a part runs.
+///
+/// The engine keeps the original game's per-stage behaviour (the 2-1 horse,
+/// the round-4 surfboard, the 7-2 door script and shocking spikes, the 7-3
+/// arena reload, the round-clear boss portrait) keyed to original parts.
+/// A part names the original part whose routines it borrows, so an
+/// expansion stage numbered 2-1 does not ride a horse unless it asks to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StageRules {
+    /// The original part whose stage-specific routines this part runs.
+    pub routines: StageId,
+    /// Whether the routine part's list-1 "GO" marker (`Func_03771A`) is
+    /// placed; markers point at places in the original layout.
+    pub markers: bool,
+}
+impl StageRules {
+    /// The original part's own routines.
+    pub fn original(id: StageId) -> Self {
+        Self {
+            routines: id,
+            markers: true,
+        }
+    }
+}
+
 /// Everything `Game` loads for a substage and its parts. `rom` is the
 /// verified cartridge; every source may read it.
 pub trait StageSource: Send + Sync {
     fn content(&self) -> Content;
+    /// The stage-specific routines part `id` runs.
+    fn rules(&self, id: StageId) -> StageRules;
     /// The part records of `id`'s substage (`id.part` is ignored).
     fn sections(&self, rom: &[u8], id: StageId) -> Result<Vec<Section>>;
     fn scroll_model(&self, rom: &[u8], id: StageId) -> Result<ScrollModel>;
@@ -73,6 +100,9 @@ impl Cartridge {
 impl StageSource for Cartridge {
     fn content(&self) -> Content {
         Content::Original
+    }
+    fn rules(&self, id: StageId) -> StageRules {
+        StageRules::original(id)
     }
     fn sections(&self, rom: &[u8], id: StageId) -> Result<Vec<Section>> {
         crate::stage::sections(rom, id.round_index(), id.substage_index())

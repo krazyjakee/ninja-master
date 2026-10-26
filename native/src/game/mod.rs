@@ -261,6 +261,10 @@ impl Game {
     pub fn content(&self) -> crate::content::Content {
         self.source.content()
     }
+    /// The stage-specific routines the current part runs.
+    pub fn rules(&self) -> crate::content::StageRules {
+        self.source.rules(self.stage_id)
+    }
     /// Index of the part being played.
     pub fn part(&self) -> usize {
         self.stage_id.part_index()
@@ -273,8 +277,11 @@ impl Game {
     }
     /// `Func_03771A` for the current part; boss arenas have none.
     fn add_part_marker(&mut self) {
+        let rules = self.rules();
         let arena = ModeFlags(self.sections[self.part()].mode_flags).boss_arena();
-        if let Ok(Some(marker)) = markers::Markers::entry(&self.rom, self.stage_id, arena) {
+        if rules.markers
+            && let Ok(Some(marker)) = markers::Markers::entry(&self.rom, rules.routines, arena)
+        {
             self.markers.add(marker);
         }
     }
@@ -456,7 +463,7 @@ impl Game {
     /// while the grounded `$300` boss pose and at least six independent
     /// list-4 shots are live. The other four damaging hits cost one frame.
     fn extra_hit_lag(&self) -> u8 {
-        if self.stage_id != StageId::new(7, 3, 0) {
+        if self.rules().routines != StageId::new(7, 3, 0) {
             return 0;
         }
         let grounded = self.combat.enemies.iter().any(|enemy| {
@@ -618,7 +625,8 @@ impl Game {
         self.combat
             .set_player_pose(animator.state, animator.cursor, animator.frame, down);
         self.combat.set_player_anchors(Some(self.player.anchors()));
-        let spike_shocked = self.stage_id.round_index() == 6 && self.stage_id.substage_index() == 1;
+        let routines = self.rules().routines;
+        let spike_shocked = routines.round_index() == 6 && routines.substage_index() == 1;
         let spikes = self
             .player
             .spikes
@@ -808,8 +816,8 @@ impl Game {
                 self.combat = combat;
                 self.stage.event_ticks = None;
                 kept_objects = self
-                    .objects
-                    .enter_part(&self.rom, self.stage_id)
+                    .source
+                    .enter_part_objects(&mut self.objects, &self.rom, self.stage_id)
                     .expect("previously validated section objects");
                 // SectionChange_S30 adds the new part's marker to list 1.
                 self.add_part_marker();

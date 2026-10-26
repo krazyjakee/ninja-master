@@ -346,7 +346,7 @@ impl StageClear {
         match step {
             Step::ClearTitle(_) => {
                 self.portrait = held_game(&self.saved)
-                    .and_then(|g| boss_portrait(g.rom(), g.stage_id.round_index()).ok());
+                    .and_then(|g| boss_portrait(g.rom(), g.rules().routines.round_index()).ok());
                 self.music(ROUND_CLEAR_MUSIC);
             }
             // Func_00F298 computes the bonuses as it draws the table.
